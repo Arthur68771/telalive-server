@@ -1,297 +1,678 @@
-const express = require("express");
-const http = require("http");
-const { WebSocketServer } = require("ws");
-const path = require("path");
-const crypto = require("crypto");
-const bcrypt = require("bcryptjs");
-const { loadDB, saveDB } = require("./db");
+// ---------- Estado geral ----------
+let token = localStorage.getItem("telalive-token") || null;
+let currentUser = null;
+let myServers = [];
+let activeServerId = null;
+let activeChannelId = null;
+let authMode = "login"; // ou "register"
 
-function startServer(port = 3000) {
-  const db = loadDB();
+let ws = null;
+let selfPeerId = null;
+let knownPeers = new Map(); // peerId -> username (quem está no canal agora)
+let pcsOut = new Map(); // peerId -> RTCPeerConnection (conexões que eu abri pra compartilhar MINHA tela)
+let pcsIn = new Map(); // peerId -> RTCPeerConnection (conexões que recebem a tela de OUTRA pessoa)
+let localStream = null;
 
-  // token -> userId (fica só na memória; ao reiniciar o servidor, todo
-  // mundo precisa logar de novo - da pra evoluir isso depois)
-  const sessions = new Map();
+const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
-  const app = express();
-  app.use(express.json());
-  app.use(express.static(path.join(__dirname, "public")));
+// ---------- Elementos ----------
+const authScreen = document.getElementById("auth-screen");
+const appScreen = document.getElementById("app-screen");
+const authUsername = document.getElementById("auth-username");
+const authPassword = document.getElementById("auth-password");
+const authSubmit = document.getElementById("auth-submit");
+const authStatus = document.getElementById("auth-status");
+const authSubtitle = document.getElementById("auth-subtitle");
+const switchLink = document.getElementById("switch-link");
+const switchModeText = document.getElementById("switch-mode");
 
-  // ---------- Autenticação ----------
+const serverRail = document.getElementById("server-rail");
+const addServerBtn = document.getElementById("add-server-btn");
+const currentServerName = document.getElementById("current-server-name");
+const inviteHint = document.getElementById("invite-hint");
+const inviteCodeEl = document.getElementById("invite-code");
+const channelList = document.getElementById("channel-list");
+const addChannelBtn = document.getElementById("add-channel-btn");
 
-  function requireAuth(req, res, next) {
-    const header = req.headers.authorization || "";
-    const token = header.replace("Bearer ", "");
-    const userId = sessions.get(token);
-    if (!userId) return res.status(401).json({ error: "Não autenticado." });
-    req.userId = userId;
-    next();
-  }
+const emptyState = document.getElementById("empty-state");
+const callView = document.getElementById("call-view");
+const activeChannelName = document.getElementById("active-channel-name");
+const videoGrid = document.getElementById("video-grid");
+const waitingState = document.getElementById("waiting-state");
+const waitingText = document.getElementById("waiting-text");
+const statusText = document.getElementById("status-text");
+const shareBtn = document.getElementById("share-btn");
+const stopShareBtn = document.getElementById("stop-share-btn");
+const chatMessagesEl = document.getElementById("chat-messages");
+const chatEmptyEl = document.getElementById("chat-empty");
+const chatInput = document.getElementById("chat-input");
+const chatSendBtn = document.getElementById("chat-send-btn");
 
-  function publicUser(user) {
-    return { id: user.id, username: user.username };
-  }
+const serverModal = document.getElementById("server-modal");
+const tabCreateServer = document.getElementById("tab-create-server");
+const tabJoinServer = document.getElementById("tab-join-server");
+const createServerForm = document.getElementById("create-server-form");
+const joinServerForm = document.getElementById("join-server-form");
+const newServerName = document.getElementById("new-server-name");
+const joinServerCode = document.getElementById("join-server-code");
+const serverModalStatus = document.getElementById("server-modal-status");
+const serverModalCancel = document.getElementById("server-modal-cancel");
+const serverModalConfirm = document.getElementById("server-modal-confirm");
 
-  app.post("/api/register", async (req, res) => {
-    const { username, password } = req.body || {};
-    if (!username || username.trim().length < 3) {
-      return res.status(400).json({ error: "Nome de usuário precisa ter pelo menos 3 letras." });
-    }
-    if (!password || password.length < 4) {
-      return res.status(400).json({ error: "Senha precisa ter pelo menos 4 caracteres." });
-    }
-    const clean = username.trim();
-    if (db.users.some((u) => u.username.toLowerCase() === clean.toLowerCase())) {
-      return res.status(400).json({ error: "Esse nome de usuário já existe." });
-    }
-    const user = {
-      id: crypto.randomUUID(),
-      username: clean,
-      passwordHash: await bcrypt.hash(password, 10),
+const channelModal = document.getElementById("channel-modal");
+const newChannelName = document.getElementById("new-channel-name");
+const channelModalStatus = document.getElementById("channel-modal-status");
+const channelModalCancel = document.getElementById("channel-modal-cancel");
+const channelModalConfirm = document.getElementById("channel-modal-confirm");
+
+const profileBtn = document.getElementById("profile-btn");
+const profileModal = document.getElementById("profile-modal");
+const profileAvatarPreview = document.getElementById("profile-avatar-preview");
+const profileAvatarInput = document.getElementById("profile-avatar-input");
+const profileAvatarChooseBtn = document.getElementById("profile-avatar-choose-btn");
+const profileModalStatus = document.getElementById("profile-modal-status");
+const profileModalCancel = document.getElementById("profile-modal-cancel");
+const profileModalConfirm = document.getElementById("profile-modal-confirm");
+
+const editServerIconBtn = document.getElementById("edit-server-icon-btn");
+const serverIconModal = document.getElementById("server-icon-modal");
+const serverIconPreview = document.getElementById("server-icon-preview");
+const serverIconInput = document.getElementById("server-icon-input");
+const serverIconChooseBtn = document.getElementById("server-icon-choose-btn");
+const serverIconModalStatus = document.getElementById("server-icon-modal-status");
+const serverIconModalCancel = document.getElementById("server-icon-modal-cancel");
+const serverIconModalConfirm = document.getElementById("server-icon-modal-confirm");
+
+let pendingAvatarDataUrl = null;
+let pendingServerIconDataUrl = null;
+
+// ---------- Redimensionar imagem antes de enviar (fica pequena e leve) ----------
+function resizeImageFile(file, maxSize = 160) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = maxSize;
+        canvas.height = maxSize;
+        const ctx = canvas.getContext("2d");
+        const side = Math.min(img.width, img.height);
+        const sx = (img.width - side) / 2;
+        const sy = (img.height - side) / 2;
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, maxSize, maxSize);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = reader.result;
     };
-    db.users.push(user);
-    saveDB(db);
-
-    const token = crypto.randomBytes(24).toString("hex");
-    sessions.set(token, user.id);
-    res.json({ token, user: publicUser(user) });
+    reader.readAsDataURL(file);
   });
+}
 
-  app.post("/api/login", async (req, res) => {
-    const { username, password } = req.body || {};
-    const user = db.users.find((u) => u.username.toLowerCase() === (username || "").trim().toLowerCase());
-    if (!user || !(await bcrypt.compare(password || "", user.passwordHash))) {
-      return res.status(401).json({ error: "Usuário ou senha incorretos." });
-    }
-    const token = crypto.randomBytes(24).toString("hex");
-    sessions.set(token, user.id);
-    res.json({ token, user: publicUser(user) });
+function avatarHtml(username, avatarDataUrl) {
+  if (avatarDataUrl) return `<img src="${avatarDataUrl}" alt="" />`;
+  return escapeHtml((username || "?").slice(0, 2).toUpperCase());
+}
+
+// ---------- Chamadas à API ----------
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {}),
+    },
   });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Algo deu errado.");
+  return data;
+}
 
-  app.get("/api/me", requireAuth, (req, res) => {
-    const user = db.users.find((u) => u.id === req.userId);
-    res.json(publicUser(user));
-  });
+// ---------- Autenticação ----------
+switchLink.addEventListener("click", () => {
+  authMode = authMode === "login" ? "register" : "login";
+  updateAuthUI();
+});
 
-  // ---------- Servidores e canais ----------
-
-  function serverWithChannels(server) {
-    return {
-      ...server,
-      channels: db.channels.filter((c) => c.serverId === server.id),
-    };
+function updateAuthUI() {
+  authStatus.textContent = "";
+  if (authMode === "login") {
+    authSubtitle.textContent = "Entre para acessar seus servidores";
+    authSubmit.textContent = "Entrar";
+    switchModeText.innerHTML = 'Não tem conta? <a id="switch-link">Criar uma agora</a>';
+  } else {
+    authSubtitle.textContent = "Crie sua conta pra começar";
+    authSubmit.textContent = "Criar conta";
+    switchModeText.innerHTML = 'Já tem conta? <a id="switch-link">Entrar</a>';
   }
-
-  app.get("/api/servers", requireAuth, (req, res) => {
-    const mine = db.servers.filter((s) => s.members.includes(req.userId));
-    res.json(mine.map(serverWithChannels));
+  document.getElementById("switch-link").addEventListener("click", () => {
+    authMode = authMode === "login" ? "register" : "login";
+    updateAuthUI();
   });
+}
 
-  app.post("/api/servers", requireAuth, (req, res) => {
-    const { name } = req.body || {};
-    if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome ao servidor." });
-
-    const server = {
-      id: crypto.randomUUID(),
-      name: name.trim(),
-      ownerId: req.userId,
-      inviteCode: crypto.randomBytes(4).toString("hex"),
-      members: [req.userId],
-    };
-    db.servers.push(server);
-
-    const generalChannel = { id: crypto.randomUUID(), serverId: server.id, name: "geral" };
-    db.channels.push(generalChannel);
-
-    saveDB(db);
-    res.json(serverWithChannels(server));
-  });
-
-  app.post("/api/servers/join", requireAuth, (req, res) => {
-    const { inviteCode } = req.body || {};
-    const server = db.servers.find((s) => s.inviteCode === (inviteCode || "").trim());
-    if (!server) return res.status(404).json({ error: "Código de convite inválido." });
-
-    if (!server.members.includes(req.userId)) {
-      server.members.push(req.userId);
-      saveDB(db);
-    }
-    res.json(serverWithChannels(server));
-  });
-
-  app.post("/api/servers/:serverId/channels", requireAuth, (req, res) => {
-    const server = db.servers.find((s) => s.id === req.params.serverId);
-    if (!server || !server.members.includes(req.userId)) {
-      return res.status(403).json({ error: "Você não faz parte desse servidor." });
-    }
-    const { name } = req.body || {};
-    if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome ao canal." });
-
-    const channel = { id: crypto.randomUUID(), serverId: server.id, name: name.trim() };
-    db.channels.push(channel);
-    saveDB(db);
-    res.json(channel);
-  });
-
-  // ---------- Mensagens de texto ----------
-
-  function channelIfMember(channelId, userId) {
-    const channel = db.channels.find((c) => c.id === channelId);
-    if (!channel) return null;
-    const server = db.servers.find((s) => s.id === channel.serverId);
-    if (!server || !server.members.includes(userId)) return null;
-    return channel;
+authSubmit.addEventListener("click", async () => {
+  const username = authUsername.value.trim();
+  const password = authPassword.value;
+  authStatus.textContent = "";
+  authSubmit.disabled = true;
+  try {
+    const endpoint = authMode === "login" ? "/api/login" : "/api/register";
+    const data = await api(endpoint, { method: "POST", body: JSON.stringify({ username, password }) });
+    token = data.token;
+    currentUser = data.user;
+    localStorage.setItem("telalive-token", token);
+    enterApp();
+  } catch (err) {
+    authStatus.textContent = err.message;
+  } finally {
+    authSubmit.disabled = false;
   }
+});
 
-  app.get("/api/channels/:channelId/messages", requireAuth, (req, res) => {
-    if (!channelIfMember(req.params.channelId, req.userId)) {
-      return res.status(403).json({ error: "Você não tem acesso a esse canal." });
-    }
-    const msgs = db.messages
-      .filter((m) => m.channelId === req.params.channelId)
-      .slice(-100); // só as últimas 100, pra não ficar pesado
-    res.json(msgs);
-  });
-
-  // ---------- WebSocket: chat em tempo real + sinalização WebRTC ----------
-  // "callRooms" cuida da chamada de vídeo/tela - agora suporta várias
-  // pessoas ao mesmo tempo: cada pessoa se conecta diretamente com
-  // todas as outras (por isso funciona bem até uns 4-5 participantes).
-  // "chatSubscribers" cuida do chat de texto (qualquer número de gente).
-  // O vídeo em si NUNCA passa por este servidor - só ajuda a conectar.
-
-  const server = http.createServer(app);
-  const wss = new WebSocketServer({ server });
-
-  const callRooms = new Map(); // channelId -> Map<peerId, ws>
-  const chatSubscribers = new Map(); // channelId -> Set de conexoes
-
-  function send(ws, msg) {
-    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+async function tryResumeSession() {
+  if (!token) return;
+  try {
+    currentUser = await api("/api/me");
+    enterApp();
+  } catch {
+    token = null;
+    localStorage.removeItem("telalive-token");
   }
+}
 
-  wss.on("connection", (ws, req) => {
-    const url = new URL(req.url, "http://localhost");
-    const token = url.searchParams.get("token");
-    const userId = sessions.get(token);
-    if (!userId) {
-      ws.close();
-      return;
+// ---------- App principal ----------
+async function enterApp() {
+  authScreen.classList.add("hidden");
+  appScreen.style.display = "flex";
+  updateProfileBtn();
+  await loadServers();
+}
+
+function updateProfileBtn() {
+  profileBtn.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
+}
+
+async function loadServers() {
+  myServers = await api("/api/servers");
+  renderServerRail();
+}
+
+function renderServerRail() {
+  serverRail.querySelectorAll(".server-icon:not(.add-btn)").forEach((el) => el.remove());
+  for (const server of myServers) {
+    const icon = document.createElement("div");
+    icon.className = "server-icon" + (server.id === activeServerId ? " active" : "");
+    icon.innerHTML = server.iconDataUrl
+      ? `<img class="server-icon-img" src="${server.iconDataUrl}" alt="" />`
+      : escapeHtml(server.name.slice(0, 2).toUpperCase());
+    icon.title = server.name;
+    icon.addEventListener("click", () => selectServer(server.id));
+    serverRail.insertBefore(icon, addServerBtn);
+  }
+}
+
+function selectServer(serverId) {
+  activeServerId = serverId;
+  activeChannelId = null;
+  leaveCall();
+  renderServerRail();
+  renderChannelList();
+  showEmptyState();
+}
+
+function renderChannelList() {
+  const server = myServers.find((s) => s.id === activeServerId);
+  channelList.innerHTML = "";
+  if (!server) {
+    currentServerName.textContent = "Selecione um servidor";
+    inviteHint.classList.add("hidden");
+    addChannelBtn.classList.add("hidden");
+    editServerIconBtn.classList.add("hidden");
+    return;
+  }
+  currentServerName.textContent = server.name;
+  inviteCodeEl.textContent = server.inviteCode;
+  inviteHint.classList.remove("hidden");
+  addChannelBtn.classList.remove("hidden");
+  editServerIconBtn.classList.toggle("hidden", server.ownerId !== currentUser?.id);
+
+  for (const channel of server.channels) {
+    const item = document.createElement("div");
+    item.className = "channel-item" + (channel.id === activeChannelId ? " active" : "");
+    item.innerHTML = `<span class="hash">#</span><span>${escapeHtml(channel.name)}</span>`;
+    item.addEventListener("click", () => selectChannel(channel.id, channel.name));
+    channelList.appendChild(item);
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+inviteHint.addEventListener("click", () => {
+  navigator.clipboard.writeText(inviteCodeEl.textContent);
+  inviteHint.querySelector("strong").textContent = "copiado!";
+  setTimeout(() => {
+    const server = myServers.find((s) => s.id === activeServerId);
+    if (server) inviteCodeEl.textContent = server.inviteCode;
+  }, 1200);
+});
+
+function showEmptyState() {
+  emptyState.classList.remove("hidden");
+  callView.classList.add("hidden");
+}
+
+function selectChannel(channelId, channelName) {
+  leaveCall();
+  activeChannelId = channelId;
+  renderChannelList();
+  emptyState.classList.add("hidden");
+  callView.classList.remove("hidden");
+  activeChannelName.textContent = channelName;
+  waitingState.classList.remove("hidden");
+  waitingText.textContent = "Aguardando alguém entrar no canal...";
+  videoGrid.innerHTML = "";
+  shareBtn.classList.remove("hidden");
+  stopShareBtn.classList.add("hidden");
+  statusText.textContent = "Conectado ao canal";
+  loadMessageHistory(channelId);
+  connectToChannel(channelId);
+}
+
+async function loadMessageHistory(channelId) {
+  chatMessagesEl.innerHTML = "";
+  try {
+    const messages = await api(`/api/channels/${channelId}/messages`);
+    if (messages.length === 0) {
+      chatMessagesEl.innerHTML = '<p class="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>';
+    } else {
+      for (const msg of messages) appendChatMessage(msg);
     }
-    const author = db.users.find((u) => u.id === userId);
-    ws.userId = userId;
-    ws.username = author ? author.username : "?";
-    ws.peerId = crypto.randomUUID();
-    ws.channelId = null;
+  } catch (err) {
+    console.error(err);
+  }
+}
 
-    ws.on("message", (raw) => {
-      let msg;
-      try {
-        msg = JSON.parse(raw);
-      } catch {
-        return;
+function appendChatMessage(msg) {
+  const emptyMsg = chatMessagesEl.querySelector(".chat-empty");
+  if (emptyMsg) emptyMsg.remove();
+
+  const isMe = currentUser && msg.userId === currentUser.id;
+  const time = new Date(msg.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+  const el = document.createElement("div");
+  el.className = "chat-msg";
+  el.innerHTML = `
+    <div class="avatar">${avatarHtml(msg.username, msg.avatarDataUrl)}</div>
+    <div class="chat-msg-body">
+      <div class="chat-msg-head">
+        <span class="chat-msg-author${isMe ? " me" : ""}">${escapeHtml(msg.username)}</span>
+        <span class="chat-msg-time">${time}</span>
+      </div>
+      <div class="chat-msg-text">${escapeHtml(msg.text)}</div>
+    </div>
+  `;
+  chatMessagesEl.appendChild(el);
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+}
+
+function sendChatMessage() {
+  const text = chatInput.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN || !activeChannelId) return;
+  ws.send(JSON.stringify({ type: "chat-message", channelId: activeChannelId, text }));
+  chatInput.value = "";
+}
+
+chatSendBtn.addEventListener("click", sendChatMessage);
+chatInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendChatMessage();
+});
+
+// ---------- WebSocket + WebRTC (suporta várias pessoas na mesma chamada) ----------
+function connectToChannel(channelId) {
+  const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${wsProtocol}://${location.host}?token=${encodeURIComponent(token)}`);
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: "enter-channel", channelId }));
+  };
+
+  ws.onmessage = async (event) => {
+    const msg = JSON.parse(event.data);
+
+    switch (msg.type) {
+      case "entered": {
+        selfPeerId = msg.selfId;
+        knownPeers = new Map(msg.peers.map((p) => [p.id, p.username]));
+        updateWaitingText();
+        break;
       }
 
-      if (msg.type === "enter-channel") {
-        const channel = db.channels.find((c) => c.id === msg.channelId);
-        if (!channel) return send(ws, { type: "error", message: "Canal não encontrado." });
+      case "peer-joined": {
+        knownPeers.set(msg.id, msg.username);
+        updateWaitingText();
+        // se eu já estiver compartilhando minha tela, o recém-chegado
+        // também precisa receber - abro uma conexão nova com ele
+        if (localStream) await startShareToPeer(msg.id);
+        break;
+      }
 
-        ws.channelId = msg.channelId;
-
-        // inscreve pro chat (sem limite de pessoas)
-        let subs = chatSubscribers.get(msg.channelId);
-        if (!subs) {
-          subs = new Set();
-          chatSubscribers.set(msg.channelId, subs);
+      case "offer": {
+        let pcIn = pcsIn.get(msg.from);
+        if (!pcIn) {
+          pcIn = createPeerConnection(msg.from, "in");
+          pcsIn.set(msg.from, pcIn);
         }
-        subs.add(ws);
+        await pcIn.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        const answer = await pcIn.createAnswer();
+        await pcIn.setLocalDescription(answer);
+        ws.send(JSON.stringify({ type: "answer", target: msg.from, sdp: answer }));
+        break;
+      }
 
-        // entra na sala de chamada (sem limite de pessoas agora)
-        let room = callRooms.get(msg.channelId);
-        if (!room) {
-          room = new Map();
-          callRooms.set(msg.channelId, room);
-        }
+      case "answer": {
+        const pcOut = pcsOut.get(msg.from);
+        if (pcOut) await pcOut.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        break;
+      }
 
-        const existingPeers = [...room.values()].map((peer) => ({
-          id: peer.peerId,
-          username: peer.username,
-        }));
-
-        room.set(ws.peerId, ws);
-
-        send(ws, {
-          type: "entered",
-          channelId: msg.channelId,
-          selfId: ws.peerId,
-          peers: existingPeers,
-        });
-
-        for (const peer of room.values()) {
-          if (peer !== ws) {
-            send(peer, { type: "peer-joined", id: ws.peerId, username: ws.username });
+      case "ice-candidate": {
+        if (!msg.candidate) break;
+        const pc = pcsOut.get(msg.from) || pcsIn.get(msg.from);
+        if (pc) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+          } catch (err) {
+            console.error(err);
           }
         }
-        return;
+        break;
       }
 
-      if (msg.type === "chat-message") {
-        if (!channelIfMember(msg.channelId, ws.userId)) return;
-        const text = (msg.text || "").trim().slice(0, 2000);
-        if (!text) return;
-
-        const author = db.users.find((u) => u.id === ws.userId);
-        const message = {
-          id: crypto.randomUUID(),
-          channelId: msg.channelId,
-          userId: ws.userId,
-          username: author ? author.username : "?",
-          text,
-          createdAt: Date.now(),
-        };
-        db.messages.push(message);
-        saveDB(db);
-
-        const subs = chatSubscribers.get(msg.channelId);
-        if (subs) {
-          for (const peer of subs) send(peer, { type: "chat-message", message });
-        }
-        return;
+      case "peer-left": {
+        knownPeers.delete(msg.id);
+        closePeerConnections(msg.id);
+        removeVideoTile(msg.id);
+        updateWaitingText();
+        break;
       }
 
-      if (["offer", "answer", "ice-candidate"].includes(msg.type)) {
-        const room = callRooms.get(ws.channelId);
-        if (!room) return;
-        const target = room.get(msg.target);
-        if (target) send(target, { ...msg, from: ws.peerId });
-      }
-    });
-
-    ws.on("close", () => {
-      const room = callRooms.get(ws.channelId);
-      if (room) {
-        room.delete(ws.peerId);
-        for (const peer of room.values()) send(peer, { type: "peer-left", id: ws.peerId });
-        if (room.size === 0) callRooms.delete(ws.channelId);
-      }
-      const subs = chatSubscribers.get(ws.channelId);
-      if (subs) {
-        subs.delete(ws);
-        if (subs.size === 0) chatSubscribers.delete(ws.channelId);
-      }
-    });
-  });
-
-  return new Promise((resolve) => {
-    server.listen(port, () => {
-      console.log(`Servidor rodando em http://localhost:${port}`);
-      resolve(server);
-    });
-  });
+      case "chat-message":
+        appendChatMessage(msg.message);
+        break;
+    }
+  };
 }
 
-module.exports = { startServer };
-
-if (require.main === module) {
-  startServer(process.env.PORT || 3000);
+function updateWaitingText() {
+  const count = knownPeers.size;
+  if (count === 0) {
+    waitingText.textContent = "Aguardando alguém entrar no canal...";
+  } else {
+    waitingText.textContent = `${count} pessoa${count > 1 ? "s" : ""} no canal. Clique em "Compartilhar minha tela" quando quiser.`;
+  }
 }
+
+function createPeerConnection(peerId, direction) {
+  const conn = new RTCPeerConnection(rtcConfig);
+
+  conn.onicecandidate = (event) => {
+    if (event.candidate) {
+      ws.send(JSON.stringify({ type: "ice-candidate", target: peerId, candidate: event.candidate }));
+    }
+  };
+
+  if (direction === "in") {
+    conn.ontrack = (event) => {
+      showVideoTile(peerId, knownPeers.get(peerId) || "Alguém", event.streams[0]);
+    };
+  }
+
+  conn.onconnectionstatechange = () => {
+    if (conn.connectionState === "connected") {
+      statusText.textContent = "Transmitindo ao vivo";
+    }
+  };
+
+  return conn;
+}
+
+function showVideoTile(peerId, username, stream) {
+  waitingState.classList.add("hidden");
+  let tile = document.getElementById(`tile-${peerId}`);
+  if (!tile) {
+    tile = document.createElement("div");
+    tile.className = "video-tile";
+    tile.id = `tile-${peerId}`;
+    tile.innerHTML = `<video autoplay playsinline></video><span class="video-tile-label">${escapeHtml(username)}</span>`;
+    videoGrid.appendChild(tile);
+  }
+  tile.querySelector("video").srcObject = stream;
+}
+
+function removeVideoTile(peerId) {
+  const tile = document.getElementById(`tile-${peerId}`);
+  if (tile) tile.remove();
+  if (videoGrid.children.length === 0) waitingState.classList.remove("hidden");
+}
+
+function closePeerConnections(peerId) {
+  const pOut = pcsOut.get(peerId);
+  if (pOut) {
+    pOut.close();
+    pcsOut.delete(peerId);
+  }
+  const pIn = pcsIn.get(peerId);
+  if (pIn) {
+    pIn.close();
+    pcsIn.delete(peerId);
+  }
+}
+
+async function startShareToPeer(peerId) {
+  const pcOut = createPeerConnection(peerId, "out");
+  for (const track of localStream.getTracks()) pcOut.addTrack(track, localStream);
+  pcsOut.set(peerId, pcOut);
+
+  const offer = await pcOut.createOffer();
+  await pcOut.setLocalDescription(offer);
+  ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
+}
+
+shareBtn.addEventListener("click", async () => {
+  try {
+    localStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
+
+    for (const peerId of knownPeers.keys()) {
+      await startShareToPeer(peerId);
+    }
+
+    shareBtn.classList.add("hidden");
+    stopShareBtn.classList.remove("hidden");
+    statusText.textContent = "Transmitindo sua tela";
+
+    localStream.getVideoTracks()[0].onended = () => stopSharing();
+  } catch (err) {
+    console.error(err);
+  }
+});
+
+stopShareBtn.addEventListener("click", stopSharing);
+
+function stopSharing() {
+  if (localStream) for (const track of localStream.getTracks()) track.stop();
+  for (const pc of pcsOut.values()) pc.close();
+  pcsOut.clear();
+  localStream = null;
+  statusText.textContent = "Compartilhamento parado";
+  stopShareBtn.classList.add("hidden");
+  shareBtn.classList.remove("hidden");
+}
+
+function leaveCall() {
+  if (localStream) for (const track of localStream.getTracks()) track.stop();
+  for (const pc of pcsOut.values()) pc.close();
+  for (const pc of pcsIn.values()) pc.close();
+  pcsOut.clear();
+  pcsIn.clear();
+  knownPeers.clear();
+  if (ws) ws.close();
+  ws = null;
+  localStream = null;
+  selfPeerId = null;
+}
+
+// ---------- Modal: criar/entrar em servidor ----------
+addServerBtn.addEventListener("click", () => {
+  serverModal.classList.remove("hidden");
+  serverModalStatus.textContent = "";
+  newServerName.value = "";
+  joinServerCode.value = "";
+  setServerTab("create");
+});
+
+function setServerTab(mode) {
+  tabCreateServer.classList.toggle("active", mode === "create");
+  tabJoinServer.classList.toggle("active", mode === "join");
+  createServerForm.classList.toggle("hidden", mode !== "create");
+  joinServerForm.classList.toggle("hidden", mode !== "join");
+  serverModal.dataset.mode = mode;
+}
+tabCreateServer.addEventListener("click", () => setServerTab("create"));
+tabJoinServer.addEventListener("click", () => setServerTab("join"));
+
+serverModalCancel.addEventListener("click", () => serverModal.classList.add("hidden"));
+
+serverModalConfirm.addEventListener("click", async () => {
+  serverModalStatus.textContent = "";
+  try {
+    let server;
+    if (serverModal.dataset.mode === "join") {
+      server = await api("/api/servers/join", {
+        method: "POST",
+        body: JSON.stringify({ inviteCode: joinServerCode.value.trim() }),
+      });
+    } else {
+      server = await api("/api/servers", {
+        method: "POST",
+        body: JSON.stringify({ name: newServerName.value.trim() }),
+      });
+    }
+    await loadServers();
+    serverModal.classList.add("hidden");
+    selectServer(server.id);
+  } catch (err) {
+    serverModalStatus.textContent = err.message;
+  }
+});
+
+// ---------- Modal: criar canal ----------
+addChannelBtn.addEventListener("click", () => {
+  channelModal.classList.remove("hidden");
+  channelModalStatus.textContent = "";
+  newChannelName.value = "";
+});
+channelModalCancel.addEventListener("click", () => channelModal.classList.add("hidden"));
+
+channelModalConfirm.addEventListener("click", async () => {
+  channelModalStatus.textContent = "";
+  try {
+    await api(`/api/servers/${activeServerId}/channels`, {
+      method: "POST",
+      body: JSON.stringify({ name: newChannelName.value.trim() }),
+    });
+    await loadServers();
+    renderChannelList();
+    channelModal.classList.add("hidden");
+  } catch (err) {
+    channelModalStatus.textContent = err.message;
+  }
+});
+
+// ---------- Modal: editar perfil ----------
+profileBtn.addEventListener("click", () => {
+  pendingAvatarDataUrl = null;
+  profileModalStatus.textContent = "";
+  profileAvatarPreview.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
+  profileModal.classList.remove("hidden");
+});
+
+profileAvatarChooseBtn.addEventListener("click", () => profileAvatarInput.click());
+
+profileAvatarInput.addEventListener("change", async () => {
+  const file = profileAvatarInput.files[0];
+  if (!file) return;
+  pendingAvatarDataUrl = await resizeImageFile(file);
+  profileAvatarPreview.innerHTML = `<img src="${pendingAvatarDataUrl}" alt="" />`;
+});
+
+profileModalCancel.addEventListener("click", () => profileModal.classList.add("hidden"));
+
+profileModalConfirm.addEventListener("click", async () => {
+  if (!pendingAvatarDataUrl) {
+    profileModal.classList.add("hidden");
+    return;
+  }
+  profileModalStatus.textContent = "";
+  try {
+    currentUser = await api("/api/me", {
+      method: "PATCH",
+      body: JSON.stringify({ avatarDataUrl: pendingAvatarDataUrl }),
+    });
+    updateProfileBtn();
+    profileModal.classList.add("hidden");
+  } catch (err) {
+    profileModalStatus.textContent = err.message;
+  }
+});
+
+// ---------- Modal: editar ícone do servidor ----------
+editServerIconBtn.addEventListener("click", () => {
+  pendingServerIconDataUrl = null;
+  serverIconModalStatus.textContent = "";
+  const server = myServers.find((s) => s.id === activeServerId);
+  serverIconPreview.innerHTML = server?.iconDataUrl
+    ? `<img src="${server.iconDataUrl}" alt="" />`
+    : escapeHtml((server?.name || "?").slice(0, 2).toUpperCase());
+  serverIconModal.classList.remove("hidden");
+});
+
+serverIconChooseBtn.addEventListener("click", () => serverIconInput.click());
+
+serverIconInput.addEventListener("change", async () => {
+  const file = serverIconInput.files[0];
+  if (!file) return;
+  pendingServerIconDataUrl = await resizeImageFile(file);
+  serverIconPreview.innerHTML = `<img src="${pendingServerIconDataUrl}" alt="" />`;
+});
+
+serverIconModalCancel.addEventListener("click", () => serverIconModal.classList.add("hidden"));
+
+serverIconModalConfirm.addEventListener("click", async () => {
+  if (!pendingServerIconDataUrl) {
+    serverIconModal.classList.add("hidden");
+    return;
+  }
+  serverIconModalStatus.textContent = "";
+  try {
+    await api(`/api/servers/${activeServerId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ iconDataUrl: pendingServerIconDataUrl }),
+    });
+    await loadServers();
+    serverIconModal.classList.add("hidden");
+  } catch (err) {
+    serverIconModalStatus.textContent = err.message;
+  }
+});
+
+// ---------- Início ----------
+updateAuthUI();
+tryResumeSession();
