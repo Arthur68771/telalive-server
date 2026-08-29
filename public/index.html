@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>TelaLive</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root {
     --bg: #121319;
@@ -292,6 +293,8 @@
     </div>
     <button id="auth-submit" class="primary-btn">Entrar</button>
     <p class="form-status" id="auth-status"></p>
+    <div class="divider">ou</div>
+    <div id="google-signin-btn" style="display:flex; justify-content:center;"></div>
     <p class="switch-mode" id="switch-mode">Não tem conta? <a id="switch-link">Criar uma agora</a></p>
   </div>
 </div>
