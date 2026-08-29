@@ -4,7 +4,11 @@ const { WebSocketServer } = require("ws");
 const path = require("path");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
+const { OAuth2Client } = require("google-auth-library");
 const { loadDB, saveDB } = require("./db");
+
+const GOOGLE_CLIENT_ID = "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 function startServer(port = 3000) {
   const db = loadDB();
@@ -29,7 +33,17 @@ function startServer(port = 3000) {
   }
 
   function publicUser(user) {
-    return { id: user.id, username: user.username, avatarDataUrl: user.avatarDataUrl || null };
+    return { id: user.id, username: user.username, avatarDataUrl: user.avatarDataUrl || user.googlePicture || null };
+  }
+
+  function uniqueUsernameFrom(base) {
+    let candidate = base.trim().slice(0, 24) || "usuario";
+    let suffix = 0;
+    while (db.users.some((u) => u.username.toLowerCase() === candidate.toLowerCase())) {
+      suffix += 1;
+      candidate = `${base.slice(0, 20)}${suffix}`;
+    }
+    return candidate;
   }
 
   app.post("/api/register", async (req, res) => {
@@ -60,9 +74,39 @@ function startServer(port = 3000) {
   app.post("/api/login", async (req, res) => {
     const { username, password } = req.body || {};
     const user = db.users.find((u) => u.username.toLowerCase() === (username || "").trim().toLowerCase());
-    if (!user || !(await bcrypt.compare(password || "", user.passwordHash))) {
+    if (!user || !user.passwordHash || !(await bcrypt.compare(password || "", user.passwordHash))) {
       return res.status(401).json({ error: "Usuário ou senha incorretos." });
     }
+    const token = crypto.randomBytes(24).toString("hex");
+    sessions.set(token, user.id);
+    res.json({ token, user: publicUser(user) });
+  });
+
+  app.post("/api/auth/google", async (req, res) => {
+    const { idToken } = req.body || {};
+    if (!idToken) return res.status(400).json({ error: "Token do Google ausente." });
+
+    let payload;
+    try {
+      const ticket = await googleClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
+      payload = ticket.getPayload();
+    } catch {
+      return res.status(401).json({ error: "Não foi possível verificar sua conta do Google." });
+    }
+
+    let user = db.users.find((u) => u.googleId === payload.sub);
+    if (!user) {
+      user = {
+        id: crypto.randomUUID(),
+        username: uniqueUsernameFrom(payload.name || payload.email.split("@")[0]),
+        googleId: payload.sub,
+        googlePicture: payload.picture || null,
+        passwordHash: null,
+      };
+      db.users.push(user);
+      saveDB(db);
+    }
+
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, user.id);
     res.json({ token, user: publicUser(user) });
