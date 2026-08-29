@@ -65,6 +65,57 @@ const channelModalStatus = document.getElementById("channel-modal-status");
 const channelModalCancel = document.getElementById("channel-modal-cancel");
 const channelModalConfirm = document.getElementById("channel-modal-confirm");
 
+const profileBtn = document.getElementById("profile-btn");
+const profileModal = document.getElementById("profile-modal");
+const profileAvatarPreview = document.getElementById("profile-avatar-preview");
+const profileAvatarInput = document.getElementById("profile-avatar-input");
+const profileAvatarChooseBtn = document.getElementById("profile-avatar-choose-btn");
+const profileModalStatus = document.getElementById("profile-modal-status");
+const profileModalCancel = document.getElementById("profile-modal-cancel");
+const profileModalConfirm = document.getElementById("profile-modal-confirm");
+
+const editServerIconBtn = document.getElementById("edit-server-icon-btn");
+const serverIconModal = document.getElementById("server-icon-modal");
+const serverIconPreview = document.getElementById("server-icon-preview");
+const serverIconInput = document.getElementById("server-icon-input");
+const serverIconChooseBtn = document.getElementById("server-icon-choose-btn");
+const serverIconModalStatus = document.getElementById("server-icon-modal-status");
+const serverIconModalCancel = document.getElementById("server-icon-modal-cancel");
+const serverIconModalConfirm = document.getElementById("server-icon-modal-confirm");
+
+let pendingAvatarDataUrl = null;
+let pendingServerIconDataUrl = null;
+
+// ---------- Redimensionar imagem antes de enviar (fica pequena e leve) ----------
+function resizeImageFile(file, maxSize = 160) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = maxSize;
+        canvas.height = maxSize;
+        const ctx = canvas.getContext("2d");
+        const side = Math.min(img.width, img.height);
+        const sx = (img.width - side) / 2;
+        const sy = (img.height - side) / 2;
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, maxSize, maxSize);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function avatarHtml(username, avatarDataUrl) {
+  if (avatarDataUrl) return `<img src="${avatarDataUrl}" alt="" />`;
+  return escapeHtml((username || "?").slice(0, 2).toUpperCase());
+}
+
 // ---------- Chamadas à API ----------
 async function api(path, options = {}) {
   const res = await fetch(path, {
@@ -137,7 +188,12 @@ async function tryResumeSession() {
 async function enterApp() {
   authScreen.classList.add("hidden");
   appScreen.style.display = "flex";
+  updateProfileBtn();
   await loadServers();
+}
+
+function updateProfileBtn() {
+  profileBtn.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
 }
 
 async function loadServers() {
@@ -150,7 +206,9 @@ function renderServerRail() {
   for (const server of myServers) {
     const icon = document.createElement("div");
     icon.className = "server-icon" + (server.id === activeServerId ? " active" : "");
-    icon.textContent = server.name.slice(0, 2).toUpperCase();
+    icon.innerHTML = server.iconDataUrl
+      ? `<img class="server-icon-img" src="${server.iconDataUrl}" alt="" />`
+      : escapeHtml(server.name.slice(0, 2).toUpperCase());
     icon.title = server.name;
     icon.addEventListener("click", () => selectServer(server.id));
     serverRail.insertBefore(icon, addServerBtn);
@@ -173,12 +231,14 @@ function renderChannelList() {
     currentServerName.textContent = "Selecione um servidor";
     inviteHint.classList.add("hidden");
     addChannelBtn.classList.add("hidden");
+    editServerIconBtn.classList.add("hidden");
     return;
   }
   currentServerName.textContent = server.name;
   inviteCodeEl.textContent = server.inviteCode;
   inviteHint.classList.remove("hidden");
   addChannelBtn.classList.remove("hidden");
+  editServerIconBtn.classList.toggle("hidden", server.ownerId !== currentUser?.id);
 
   for (const channel of server.channels) {
     const item = document.createElement("div");
@@ -250,11 +310,14 @@ function appendChatMessage(msg) {
   const el = document.createElement("div");
   el.className = "chat-msg";
   el.innerHTML = `
-    <div class="chat-msg-head">
-      <span class="chat-msg-author${isMe ? " me" : ""}">${escapeHtml(msg.username)}</span>
-      <span class="chat-msg-time">${time}</span>
+    <div class="avatar">${avatarHtml(msg.username, msg.avatarDataUrl)}</div>
+    <div class="chat-msg-body">
+      <div class="chat-msg-head">
+        <span class="chat-msg-author${isMe ? " me" : ""}">${escapeHtml(msg.username)}</span>
+        <span class="chat-msg-time">${time}</span>
+      </div>
+      <div class="chat-msg-text">${escapeHtml(msg.text)}</div>
     </div>
-    <div class="chat-msg-text">${escapeHtml(msg.text)}</div>
   `;
   chatMessagesEl.appendChild(el);
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
@@ -530,6 +593,83 @@ channelModalConfirm.addEventListener("click", async () => {
     channelModal.classList.add("hidden");
   } catch (err) {
     channelModalStatus.textContent = err.message;
+  }
+});
+
+// ---------- Modal: editar perfil ----------
+profileBtn.addEventListener("click", () => {
+  pendingAvatarDataUrl = null;
+  profileModalStatus.textContent = "";
+  profileAvatarPreview.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
+  profileModal.classList.remove("hidden");
+});
+
+profileAvatarChooseBtn.addEventListener("click", () => profileAvatarInput.click());
+
+profileAvatarInput.addEventListener("change", async () => {
+  const file = profileAvatarInput.files[0];
+  if (!file) return;
+  pendingAvatarDataUrl = await resizeImageFile(file);
+  profileAvatarPreview.innerHTML = `<img src="${pendingAvatarDataUrl}" alt="" />`;
+});
+
+profileModalCancel.addEventListener("click", () => profileModal.classList.add("hidden"));
+
+profileModalConfirm.addEventListener("click", async () => {
+  if (!pendingAvatarDataUrl) {
+    profileModal.classList.add("hidden");
+    return;
+  }
+  profileModalStatus.textContent = "";
+  try {
+    currentUser = await api("/api/me", {
+      method: "PATCH",
+      body: JSON.stringify({ avatarDataUrl: pendingAvatarDataUrl }),
+    });
+    updateProfileBtn();
+    profileModal.classList.add("hidden");
+  } catch (err) {
+    profileModalStatus.textContent = err.message;
+  }
+});
+
+// ---------- Modal: editar ícone do servidor ----------
+editServerIconBtn.addEventListener("click", () => {
+  pendingServerIconDataUrl = null;
+  serverIconModalStatus.textContent = "";
+  const server = myServers.find((s) => s.id === activeServerId);
+  serverIconPreview.innerHTML = server?.iconDataUrl
+    ? `<img src="${server.iconDataUrl}" alt="" />`
+    : escapeHtml((server?.name || "?").slice(0, 2).toUpperCase());
+  serverIconModal.classList.remove("hidden");
+});
+
+serverIconChooseBtn.addEventListener("click", () => serverIconInput.click());
+
+serverIconInput.addEventListener("change", async () => {
+  const file = serverIconInput.files[0];
+  if (!file) return;
+  pendingServerIconDataUrl = await resizeImageFile(file);
+  serverIconPreview.innerHTML = `<img src="${pendingServerIconDataUrl}" alt="" />`;
+});
+
+serverIconModalCancel.addEventListener("click", () => serverIconModal.classList.add("hidden"));
+
+serverIconModalConfirm.addEventListener("click", async () => {
+  if (!pendingServerIconDataUrl) {
+    serverIconModal.classList.add("hidden");
+    return;
+  }
+  serverIconModalStatus.textContent = "";
+  try {
+    await api(`/api/servers/${activeServerId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ iconDataUrl: pendingServerIconDataUrl }),
+    });
+    await loadServers();
+    serverIconModal.classList.add("hidden");
+  } catch (err) {
+    serverIconModalStatus.textContent = err.message;
   }
 });
 
