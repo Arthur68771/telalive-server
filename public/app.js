@@ -73,6 +73,7 @@ const profileAvatarChooseBtn = document.getElementById("profile-avatar-choose-bt
 const profileModalStatus = document.getElementById("profile-modal-status");
 const profileModalCancel = document.getElementById("profile-modal-cancel");
 const profileModalConfirm = document.getElementById("profile-modal-confirm");
+const profileLogoutBtn = document.getElementById("profile-logout-btn");
 
 const editServerIconBtn = document.getElementById("edit-server-icon-btn");
 const serverIconModal = document.getElementById("server-icon-modal");
@@ -614,6 +615,21 @@ profileAvatarInput.addEventListener("change", async () => {
 });
 
 profileModalCancel.addEventListener("click", () => profileModal.classList.add("hidden"));
+
+profileLogoutBtn.addEventListener("click", () => {
+  leaveCall();
+  token = null;
+  currentUser = null;
+  myServers = [];
+  activeServerId = null;
+  activeChannelId = null;
+  localStorage.removeItem("telalive-token");
+  profileModal.classList.add("hidden");
+  appScreen.style.display = "none";
+  authScreen.classList.remove("hidden");
+  authUsername.value = "";
+  authPassword.value = "";
+});
 
 profileModalConfirm.addEventListener("click", async () => {
   if (!pendingAvatarDataUrl) {
