@@ -96,6 +96,44 @@
   .server-icon.active { border-radius: 14px; border-color: var(--accent); background: var(--accent); }
   .server-icon.add-btn { background: transparent; border: 2px dashed var(--border); color: var(--muted); font-size: 1.3rem; }
   .server-icon.add-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .server-icon-img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+
+  .rail-spacer { flex: 1; }
+  .profile-btn {
+    width: 46px; height: 46px; border-radius: 50%; overflow: hidden; cursor: pointer;
+    border: 2px solid transparent; flex-shrink: 0; background: var(--elevated);
+    display: flex; align-items: center; justify-content: center; font-weight: 700;
+  }
+  .profile-btn:hover { border-color: var(--accent); }
+  .profile-btn img { width: 100%; height: 100%; object-fit: cover; }
+
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%; overflow: hidden; flex-shrink: 0;
+    background: var(--accent); display: flex; align-items: center; justify-content: center;
+    font-size: 0.78rem; font-weight: 700; color: white;
+  }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .chat-msg { display: flex; gap: 10px; }
+  .chat-msg-body { flex: 1; min-width: 0; }
+
+  .icon-edit-btn {
+    background: transparent; border: none; color: var(--muted); cursor: pointer;
+    font-size: 0.72rem; text-decoration: underline; padding: 0; margin-top: 2px;
+  }
+  .icon-edit-btn:hover { color: var(--text); }
+
+  .avatar-preview {
+    width: 96px; height: 96px; border-radius: 50%; overflow: hidden; margin: 0 auto 14px;
+    background: var(--elevated); display: flex; align-items: center; justify-content: center;
+    font-size: 1.8rem; font-weight: 700; border: 2px solid var(--border);
+  }
+  .avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+  .file-input-btn {
+    display: block; width: 100%; text-align: center; padding: 10px; border-radius: 10px;
+    border: 1px dashed var(--border); background: transparent; color: var(--muted);
+    cursor: pointer; font-size: 0.88rem; margin-bottom: 14px;
+  }
+  .file-input-btn:hover { border-color: var(--accent); color: var(--accent); }
 
   .channel-panel {
     width: 220px; background: var(--panel); border-right: 1px solid var(--border);
@@ -263,12 +301,15 @@
   <div class="server-rail" id="server-rail">
     <!-- ícones de servidor entram aqui via JS -->
     <div class="server-icon add-btn" id="add-server-btn" title="Adicionar servidor">+</div>
+    <div class="rail-spacer"></div>
+    <div class="profile-btn" id="profile-btn" title="Editar perfil">?</div>
   </div>
 
   <div class="channel-panel">
     <div class="channel-panel-header">
       <h2 id="current-server-name">Selecione um servidor</h2>
       <div class="invite-hint hidden" id="invite-hint" title="Clique para copiar">Código: <strong id="invite-code"></strong></div>
+      <button class="icon-edit-btn hidden" id="edit-server-icon-btn">Trocar ícone do servidor</button>
     </div>
     <div class="channel-list" id="channel-list"></div>
     <button class="add-channel-btn hidden" id="add-channel-btn">+ Criar canal</button>
@@ -349,6 +390,36 @@
     <div class="modal-actions">
       <button class="secondary-btn" id="channel-modal-cancel">Cancelar</button>
       <button class="primary-btn" id="channel-modal-confirm">Criar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: editar perfil -->
+<div class="modal-backdrop hidden" id="profile-modal">
+  <div class="modal">
+    <h3>Editar perfil</h3>
+    <div class="avatar-preview" id="profile-avatar-preview">?</div>
+    <input type="file" accept="image/*" id="profile-avatar-input" class="hidden" />
+    <button class="file-input-btn" id="profile-avatar-choose-btn">Escolher uma foto</button>
+    <p class="form-status" id="profile-modal-status"></p>
+    <div class="modal-actions">
+      <button class="secondary-btn" id="profile-modal-cancel">Fechar</button>
+      <button class="primary-btn" id="profile-modal-confirm">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: editar ícone do servidor -->
+<div class="modal-backdrop hidden" id="server-icon-modal">
+  <div class="modal">
+    <h3>Ícone do servidor</h3>
+    <div class="avatar-preview" id="server-icon-preview">?</div>
+    <input type="file" accept="image/*" id="server-icon-input" class="hidden" />
+    <button class="file-input-btn" id="server-icon-choose-btn">Escolher uma imagem</button>
+    <p class="form-status" id="server-icon-modal-status"></p>
+    <div class="modal-actions">
+      <button class="secondary-btn" id="server-icon-modal-cancel">Cancelar</button>
+      <button class="primary-btn" id="server-icon-modal-confirm">Salvar</button>
     </div>
   </div>
 </div>
