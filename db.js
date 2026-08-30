@@ -1,28 +1,45 @@
-// Banco de dados bem simples guardado num arquivo JSON. Pra um app
-// pequeno como esse, isso evita ter que instalar um banco de dados de
-// verdade (Postgres, MySQL etc) - o que seria complicado demais por
-// enquanto. Quando o app crescer, isso pode ser trocado por um banco
-// real sem mudar muita coisa no resto do codigo.
+// Banco de dados permanente usando MongoDB Atlas. Guardamos tudo (usuarios,
+// servidores, canais, mensagens) como UM documento so dentro de uma
+// colecao - assim o resto do codigo do servidor continua tratando os
+// dados como um objeto simples (db.users, db.servers etc), igual antes,
+// só que agora isso sobrevive a reinicios e atualizacoes.
 
-const fs = require("fs");
-const path = require("path");
+const { MongoClient } = require("mongodb");
 
-const DB_PATH = path.join(__dirname, "data", "db.json");
+const uri = process.env.MONGODB_URI;
+let client = null;
+let collectionPromise = null;
 
-function loadDB() {
-  try {
-    const raw = fs.readFileSync(DB_PATH, "utf-8");
-    const data = JSON.parse(raw);
-    if (!data.messages) data.messages = [];
-    return data;
-  } catch {
-    return { users: [], servers: [], channels: [], messages: [] };
+function getCollection() {
+  if (!uri) {
+    throw new Error(
+      "MONGODB_URI não configurada. Adicione essa variável de ambiente no Render (aba Environment) com a string de conexão do MongoDB Atlas."
+    );
   }
+  if (!collectionPromise) {
+    client = new MongoClient(uri);
+    collectionPromise = client.connect().then(() => client.db("telalive").collection("state"));
+  }
+  return collectionPromise;
 }
 
-function saveDB(db) {
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+async function loadDB() {
+  const collection = await getCollection();
+  const doc = await collection.findOne({ _id: "singleton" });
+  if (doc) {
+    delete doc._id;
+    if (!doc.users) doc.users = [];
+    if (!doc.servers) doc.servers = [];
+    if (!doc.channels) doc.channels = [];
+    if (!doc.messages) doc.messages = [];
+    return doc;
+  }
+  return { users: [], servers: [], channels: [], messages: [] };
+}
+
+async function saveDB(db) {
+  const collection = await getCollection();
+  await collection.replaceOne({ _id: "singleton" }, { _id: "singleton", ...db }, { upsert: true });
 }
 
 module.exports = { loadDB, saveDB };
