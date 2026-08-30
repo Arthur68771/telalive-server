@@ -213,7 +213,95 @@ async function startServer(port = 3000) {
     res.json(channel);
   });
 
-  // ---------- Mensagens de texto ----------
+  // ---------- Amigos ----------
+
+  app.get("/api/friends", requireAuth, (req, res) => {
+    const myId = req.userId;
+    const accepted = db.friendRequests.filter(
+      (r) => r.status === "accepted" && (r.fromUserId === myId || r.toUserId === myId)
+    );
+    const friends = accepted.map((r) => {
+      const otherId = r.fromUserId === myId ? r.toUserId : r.fromUserId;
+      const otherUser = db.users.find((u) => u.id === otherId);
+      return otherUser ? publicUser(otherUser) : null;
+    }).filter(Boolean);
+
+    const incoming = db.friendRequests
+      .filter((r) => r.status === "pending" && r.toUserId === myId)
+      .map((r) => {
+        const fromUser = db.users.find((u) => u.id === r.fromUserId);
+        return { requestId: r.id, user: fromUser ? publicUser(fromUser) : null };
+      })
+      .filter((r) => r.user);
+
+    const outgoing = db.friendRequests
+      .filter((r) => r.status === "pending" && r.fromUserId === myId)
+      .map((r) => {
+        const toUser = db.users.find((u) => u.id === r.toUserId);
+        return { requestId: r.id, user: toUser ? publicUser(toUser) : null };
+      })
+      .filter((r) => r.user);
+
+    res.json({ friends, incoming, outgoing });
+  });
+
+  app.post("/api/friends/request", requireAuth, (req, res) => {
+    const { username } = req.body || {};
+    const target = db.users.find(
+      (u) => u.username.toLowerCase() === (username || "").trim().toLowerCase()
+    );
+    if (!target) return res.status(404).json({ error: "Usuário não encontrado." });
+    if (target.id === req.userId) return res.status(400).json({ error: "Você não pode adicionar você mesmo." });
+
+    const existing = db.friendRequests.find(
+      (r) =>
+        ((r.fromUserId === req.userId && r.toUserId === target.id) ||
+          (r.fromUserId === target.id && r.toUserId === req.userId)) &&
+        r.status !== "declined"
+    );
+    if (existing) {
+      if (existing.status === "accepted") return res.status(400).json({ error: "Vocês já são amigos." });
+      if (existing.fromUserId === target.id) {
+        // a outra pessoa já tinha te chamado - aceita automaticamente
+        existing.status = "accepted";
+        persist();
+        return res.json({ ok: true, autoAccepted: true });
+      }
+      return res.status(400).json({ error: "Pedido já enviado, aguardando resposta." });
+    }
+
+    db.friendRequests.push({
+      id: crypto.randomUUID(),
+      fromUserId: req.userId,
+      toUserId: target.id,
+      status: "pending",
+      createdAt: Date.now(),
+    });
+    persist();
+    res.json({ ok: true });
+  });
+
+  app.post("/api/friends/:requestId/accept", requireAuth, (req, res) => {
+    const request = db.friendRequests.find((r) => r.id === req.params.requestId);
+    if (!request || request.toUserId !== req.userId || request.status !== "pending") {
+      return res.status(404).json({ error: "Pedido não encontrado." });
+    }
+    request.status = "accepted";
+    persist();
+    res.json({ ok: true });
+  });
+
+  app.post("/api/friends/:requestId/decline", requireAuth, (req, res) => {
+    const request = db.friendRequests.find((r) => r.id === req.params.requestId);
+    if (!request || (request.toUserId !== req.userId && request.fromUserId !== req.userId)) {
+      return res.status(404).json({ error: "Pedido não encontrado." });
+    }
+    db.friendRequests = db.friendRequests.filter((r) => r.id !== req.params.requestId);
+    persist();
+    res.json({ ok: true });
+  });
+
+
 
   function channelIfMember(channelId, userId) {
     const channel = db.channels.find((c) => c.id === channelId);
