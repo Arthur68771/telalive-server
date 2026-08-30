@@ -39,7 +39,7 @@ const callView = document.getElementById("call-view");
 const activeChannelName = document.getElementById("active-channel-name");
 const videoGrid = document.getElementById("video-grid");
 const waitingState = document.getElementById("waiting-state");
-const participantsBar = document.getElementById("participants-bar");
+const participantsCircleRow = document.getElementById("participants-circle-row");
 const waitingText = document.getElementById("waiting-text");
 const statusText = document.getElementById("status-text");
 const shareBtn = document.getElementById("share-btn");
@@ -530,18 +530,18 @@ function updateWaitingText() {
 }
 
 function renderParticipantsBar() {
-  participantsBar.innerHTML = "";
+  participantsCircleRow.innerHTML = "";
 
-  const meChip = document.createElement("div");
-  meChip.className = "participant-chip";
-  meChip.innerHTML = `<div class="avatar">${avatarHtml(currentUser?.username, currentUser?.avatarDataUrl)}</div><span>Você</span>`;
-  participantsBar.appendChild(meChip);
+  const meCircle = document.createElement("div");
+  meCircle.className = "participant-circle";
+  meCircle.innerHTML = `<div class="avatar-lg">${avatarHtml(currentUser?.username, currentUser?.avatarDataUrl)}</div><div class="participant-name">Você</div>`;
+  participantsCircleRow.appendChild(meCircle);
 
   for (const peer of knownPeers.values()) {
-    const chip = document.createElement("div");
-    chip.className = "participant-chip";
-    chip.innerHTML = `<div class="avatar">${avatarHtml(peer.username, peer.avatarDataUrl)}</div><span>${escapeHtml(peer.username)}</span>`;
-    participantsBar.appendChild(chip);
+    const circle = document.createElement("div");
+    circle.className = "participant-circle";
+    circle.innerHTML = `<div class="avatar-lg">${avatarHtml(peer.username, peer.avatarDataUrl)}</div><div class="participant-name">${escapeHtml(peer.username)}</div>`;
+    participantsCircleRow.appendChild(circle);
   }
 }
 
