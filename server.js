@@ -136,16 +136,22 @@ async function startServer(port = 3000) {
 
   // ---------- Servidores e canais ----------
 
-  function serverWithChannels(server) {
+  function serverWithChannels(server, userId) {
+    const muted = new Set(
+      (db.users.find((u) => u.id === userId)?.mutedChannelIds) || []
+    );
     return {
       ...server,
-      channels: db.channels.filter((c) => c.serverId === server.id),
+      categories: db.categories.filter((c) => c.serverId === server.id),
+      channels: db.channels
+        .filter((c) => c.serverId === server.id)
+        .map((c) => ({ ...c, muted: muted.has(c.id) })),
     };
   }
 
   app.get("/api/servers", requireAuth, (req, res) => {
     const mine = db.servers.filter((s) => s.members.includes(req.userId));
-    res.json(mine.map(serverWithChannels));
+    res.json(mine.map((s) => serverWithChannels(s, req.userId)));
   });
 
   app.post("/api/servers", requireAuth, (req, res) => {
@@ -161,11 +167,11 @@ async function startServer(port = 3000) {
     };
     db.servers.push(server);
 
-    const generalChannel = { id: crypto.randomUUID(), serverId: server.id, name: "geral" };
+    const generalChannel = { id: crypto.randomUUID(), serverId: server.id, name: "geral", categoryId: null };
     db.channels.push(generalChannel);
 
     persist();
-    res.json(serverWithChannels(server));
+    res.json(serverWithChannels(server, req.userId));
   });
 
   app.post("/api/servers/join", requireAuth, (req, res) => {
@@ -177,7 +183,7 @@ async function startServer(port = 3000) {
       server.members.push(req.userId);
       persist();
     }
-    res.json(serverWithChannels(server));
+    res.json(serverWithChannels(server, req.userId));
   });
 
   app.patch("/api/servers/:serverId", requireAuth, (req, res) => {
@@ -196,7 +202,7 @@ async function startServer(port = 3000) {
       server.iconDataUrl = iconDataUrl;
       persist();
     }
-    res.json(serverWithChannels(server));
+    res.json(serverWithChannels(server, req.userId));
   });
 
   app.post("/api/servers/:serverId/channels", requireAuth, (req, res) => {
@@ -204,13 +210,51 @@ async function startServer(port = 3000) {
     if (!server || !server.members.includes(req.userId)) {
       return res.status(403).json({ error: "Você não faz parte desse servidor." });
     }
-    const { name } = req.body || {};
+    const { name, categoryId } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome ao canal." });
 
-    const channel = { id: crypto.randomUUID(), serverId: server.id, name: name.trim() };
+    const channel = {
+      id: crypto.randomUUID(),
+      serverId: server.id,
+      name: name.trim(),
+      categoryId: categoryId || null,
+    };
     db.channels.push(channel);
     persist();
     res.json(channel);
+  });
+
+  app.post("/api/servers/:serverId/categories", requireAuth, (req, res) => {
+    const server = db.servers.find((s) => s.id === req.params.serverId);
+    if (!server || !server.members.includes(req.userId)) {
+      return res.status(403).json({ error: "Você não faz parte desse servidor." });
+    }
+    const { name } = req.body || {};
+    if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome à categoria." });
+
+    const category = { id: crypto.randomUUID(), serverId: server.id, name: name.trim() };
+    db.categories.push(category);
+    persist();
+    res.json(category);
+  });
+
+  app.post("/api/channels/:channelId/mute", requireAuth, (req, res) => {
+    const channel = db.channels.find((c) => c.id === req.params.channelId);
+    if (!channel) return res.status(404).json({ error: "Canal não encontrado." });
+    const user = db.users.find((u) => u.id === req.userId);
+    if (!user.mutedChannelIds) user.mutedChannelIds = [];
+
+    const idx = user.mutedChannelIds.indexOf(req.params.channelId);
+    let muted;
+    if (idx === -1) {
+      user.mutedChannelIds.push(req.params.channelId);
+      muted = true;
+    } else {
+      user.mutedChannelIds.splice(idx, 1);
+      muted = false;
+    }
+    persist();
+    res.json({ muted });
   });
 
   // ---------- Amigos ----------
