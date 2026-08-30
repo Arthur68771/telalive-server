@@ -93,6 +93,23 @@ const incomingList = document.getElementById("incoming-list");
 const outgoingList = document.getElementById("outgoing-list");
 const friendsList = document.getElementById("friends-list");
 
+const newChannelCategory = document.getElementById("new-channel-category");
+const categoryModal = document.getElementById("category-modal");
+const newCategoryName = document.getElementById("new-category-name");
+const categoryModalStatus = document.getElementById("category-modal-status");
+const categoryModalCancel = document.getElementById("category-modal-cancel");
+const categoryModalConfirm = document.getElementById("category-modal-confirm");
+
+const serverContextMenu = document.getElementById("server-context-menu");
+const ctxCreateChannel = document.getElementById("ctx-create-channel");
+const ctxCreateCategory = document.getElementById("ctx-create-category");
+const ctxInvite = document.getElementById("ctx-invite");
+const ctxToggleMuted = document.getElementById("ctx-toggle-muted");
+const ctxToggleMutedSwitch = document.getElementById("ctx-toggle-muted-switch");
+
+let contextMenuServerId = null;
+let hideMutedChannels = localStorage.getItem("telalive-hide-muted") === "1";
+
 let pendingAvatarDataUrl = null;
 let pendingServerIconDataUrl = null;
 
@@ -221,6 +238,10 @@ function renderServerRail() {
       : escapeHtml(server.name.slice(0, 2).toUpperCase());
     icon.title = server.name;
     icon.addEventListener("click", () => selectServer(server.id));
+    icon.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      openServerContextMenu(server.id, e.clientX, e.clientY);
+    });
     serverRail.insertBefore(icon, addServerBtn);
   }
 }
@@ -253,13 +274,49 @@ function renderChannelList() {
   addChannelBtn.classList.remove("hidden");
   editServerIconBtn.classList.toggle("hidden", server.ownerId !== currentUser?.id);
 
+  const categories = server.categories || [];
+  const channelsByCategory = new Map();
+  const uncategorized = [];
   for (const channel of server.channels) {
-    const item = document.createElement("div");
-    item.className = "channel-item" + (channel.id === activeChannelId ? " active" : "");
-    item.innerHTML = `<span class="hash">#</span><span>${escapeHtml(channel.name)}</span>`;
-    item.addEventListener("click", () => selectChannel(channel.id, channel.name));
-    channelList.appendChild(item);
+    if (hideMutedChannels && channel.muted) continue;
+    if (channel.categoryId) {
+      if (!channelsByCategory.has(channel.categoryId)) channelsByCategory.set(channel.categoryId, []);
+      channelsByCategory.get(channel.categoryId).push(channel);
+    } else {
+      uncategorized.push(channel);
+    }
   }
+
+  for (const channel of uncategorized) channelList.appendChild(renderChannelItem(channel));
+
+  for (const category of categories) {
+    const header = document.createElement("div");
+    header.className = "category-header";
+    header.innerHTML = `<span>${escapeHtml(category.name)}</span>`;
+    channelList.appendChild(header);
+    const items = channelsByCategory.get(category.id) || [];
+    for (const channel of items) channelList.appendChild(renderChannelItem(channel));
+  }
+}
+
+function renderChannelItem(channel) {
+  const item = document.createElement("div");
+  item.className = "channel-item" + (channel.id === activeChannelId ? " active" : "") + (channel.muted ? " muted" : "");
+  item.innerHTML = `
+    <span class="hash">#</span><span>${escapeHtml(channel.name)}</span>
+    <button class="mute-toggle" title="${channel.muted ? "Reativar" : "Silenciar"}">${channel.muted ? "🔇" : "🔊"}</button>
+  `;
+  item.addEventListener("click", (e) => {
+    if (e.target.closest(".mute-toggle")) return;
+    selectChannel(channel.id, channel.name);
+  });
+  item.querySelector(".mute-toggle").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await api(`/api/channels/${channel.id}/mute`, { method: "POST" });
+    await loadServers();
+    renderChannelList();
+  });
+  return item;
 }
 
 function escapeHtml(str) {
@@ -591,6 +648,14 @@ addChannelBtn.addEventListener("click", () => {
   channelModal.classList.remove("hidden");
   channelModalStatus.textContent = "";
   newChannelName.value = "";
+  const server = myServers.find((s) => s.id === activeServerId);
+  newChannelCategory.innerHTML = '<option value="">Sem categoria</option>';
+  for (const cat of server?.categories || []) {
+    const opt = document.createElement("option");
+    opt.value = cat.id;
+    opt.textContent = cat.name;
+    newChannelCategory.appendChild(opt);
+  }
 });
 channelModalCancel.addEventListener("click", () => channelModal.classList.add("hidden"));
 
@@ -599,7 +664,7 @@ channelModalConfirm.addEventListener("click", async () => {
   try {
     await api(`/api/servers/${activeServerId}/channels`, {
       method: "POST",
-      body: JSON.stringify({ name: newChannelName.value.trim() }),
+      body: JSON.stringify({ name: newChannelName.value.trim(), categoryId: newChannelCategory.value || null }),
     });
     await loadServers();
     renderChannelList();
@@ -800,6 +865,71 @@ async function respondFriendRequest(requestId, action) {
     console.error(err);
   }
 }
+
+// ---------- Menu de contexto do servidor (botão direito) ----------
+function openServerContextMenu(serverId, x, y) {
+  contextMenuServerId = serverId;
+  ctxToggleMutedSwitch.classList.toggle("on", hideMutedChannels);
+  serverContextMenu.style.left = `${x}px`;
+  serverContextMenu.style.top = `${y}px`;
+  serverContextMenu.classList.remove("hidden");
+}
+
+function closeServerContextMenu() {
+  serverContextMenu.classList.add("hidden");
+  contextMenuServerId = null;
+}
+
+document.addEventListener("click", (e) => {
+  if (!serverContextMenu.contains(e.target)) closeServerContextMenu();
+});
+
+ctxCreateChannel.addEventListener("click", () => {
+  if (contextMenuServerId !== activeServerId) selectServer(contextMenuServerId);
+  closeServerContextMenu();
+  addChannelBtn.click();
+});
+
+ctxCreateCategory.addEventListener("click", () => {
+  if (contextMenuServerId !== activeServerId) selectServer(contextMenuServerId);
+  closeServerContextMenu();
+  newCategoryName.value = "";
+  categoryModalStatus.textContent = "";
+  categoryModal.classList.remove("hidden");
+});
+
+ctxInvite.addEventListener("click", () => {
+  const server = myServers.find((s) => s.id === contextMenuServerId);
+  if (server) {
+    navigator.clipboard.writeText(server.inviteCode);
+    ctxInvite.querySelector("span").textContent = "Código copiado!";
+    setTimeout(() => (ctxInvite.querySelector("span").textContent = "Convidar para o servidor"), 1200);
+  }
+});
+
+ctxToggleMuted.addEventListener("click", () => {
+  hideMutedChannels = !hideMutedChannels;
+  localStorage.setItem("telalive-hide-muted", hideMutedChannels ? "1" : "0");
+  ctxToggleMutedSwitch.classList.toggle("on", hideMutedChannels);
+  renderChannelList();
+});
+
+categoryModalCancel.addEventListener("click", () => categoryModal.classList.add("hidden"));
+
+categoryModalConfirm.addEventListener("click", async () => {
+  categoryModalStatus.textContent = "";
+  try {
+    await api(`/api/servers/${activeServerId}/categories`, {
+      method: "POST",
+      body: JSON.stringify({ name: newCategoryName.value.trim() }),
+    });
+    await loadServers();
+    renderChannelList();
+    categoryModal.classList.add("hidden");
+  } catch (err) {
+    categoryModalStatus.textContent = err.message;
+  }
+});
 
 // ---------- Início ----------
 updateAuthUI();
