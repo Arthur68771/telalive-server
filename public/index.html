@@ -292,6 +292,44 @@
   .friend-action-btn.decline { background: var(--elevated); color: var(--text); border: 1px solid var(--border); }
   .friend-action-btn.decline:hover { background: var(--danger); color: white; }
   .friends-empty { color: var(--muted); font-size: 0.88rem; }
+
+  /* ---------- Menu de contexto (botão direito) ---------- */
+  .context-menu {
+    position: fixed; z-index: 50; background: var(--elevated); border: 1px solid var(--border);
+    border-radius: 10px; padding: 6px; min-width: 220px; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .context-menu-item {
+    padding: 9px 12px; border-radius: 6px; font-size: 0.88rem; cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .context-menu-item:hover { background: var(--elevated-hover); }
+  .context-menu-divider { height: 1px; background: var(--border); margin: 6px 4px; }
+  .context-menu-toggle {
+    width: 32px; height: 18px; border-radius: 999px; background: var(--border);
+    position: relative; flex-shrink: 0; transition: background 0.15s;
+  }
+  .context-menu-toggle.on { background: var(--accent); }
+  .context-menu-toggle::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+    border-radius: 50%; background: white; transition: transform 0.15s;
+  }
+  .context-menu-toggle.on::after { transform: translateX(14px); }
+
+  /* ---------- Categorias de canal ---------- */
+  .category-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    padding: 10px 8px 4px; font-size: 0.72rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer;
+  }
+  .category-add-btn { background: transparent; border: none; color: var(--muted); font-size: 1rem; cursor: pointer; line-height: 1; }
+  .category-add-btn:hover { color: var(--accent); }
+  .channel-item.muted { opacity: 0.5; }
+  .channel-item .mute-toggle {
+    margin-left: auto; background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font-size: 0.75rem; opacity: 0; padding: 2px 4px;
+  }
+  .channel-item:hover .mute-toggle { opacity: 1; }
+  .channel-item .mute-toggle:hover { color: var(--text); }
 </style>
 </head>
 <body>
@@ -448,11 +486,45 @@
       <label for="new-channel-name">Nome do canal</label>
       <input id="new-channel-name" placeholder="Ex: jogos" />
     </div>
+    <div class="field">
+      <label for="new-channel-category">Categoria</label>
+      <select id="new-channel-category" style="width:100%; padding:11px 13px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:1rem;">
+        <option value="">Sem categoria</option>
+      </select>
+    </div>
     <p class="form-status" id="channel-modal-status"></p>
     <div class="modal-actions">
       <button class="secondary-btn" id="channel-modal-cancel">Cancelar</button>
       <button class="primary-btn" id="channel-modal-confirm">Criar</button>
     </div>
+  </div>
+</div>
+
+<!-- Modal: criar categoria -->
+<div class="modal-backdrop hidden" id="category-modal">
+  <div class="modal">
+    <h3>Criar categoria</h3>
+    <div class="field">
+      <label for="new-category-name">Nome da categoria</label>
+      <input id="new-category-name" placeholder="Ex: Jogos" />
+    </div>
+    <p class="form-status" id="category-modal-status"></p>
+    <div class="modal-actions">
+      <button class="secondary-btn" id="category-modal-cancel">Cancelar</button>
+      <button class="primary-btn" id="category-modal-confirm">Criar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Menu de contexto do servidor (botão direito) -->
+<div class="context-menu hidden" id="server-context-menu">
+  <div class="context-menu-item" id="ctx-create-channel"><span>Criar canal</span></div>
+  <div class="context-menu-item" id="ctx-create-category"><span>Criar categoria</span></div>
+  <div class="context-menu-item" id="ctx-invite"><span>Convidar para o servidor</span></div>
+  <div class="context-menu-divider"></div>
+  <div class="context-menu-item" id="ctx-toggle-muted">
+    <span>Ocultar canais silenciados</span>
+    <div class="context-menu-toggle" id="ctx-toggle-muted-switch"></div>
   </div>
 </div>
 
