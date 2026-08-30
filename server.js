@@ -257,6 +257,32 @@ async function startServer(port = 3000) {
     res.json({ muted });
   });
 
+  app.delete("/api/channels/:channelId", requireAuth, (req, res) => {
+    const channel = db.channels.find((c) => c.id === req.params.channelId);
+    if (!channel) return res.status(404).json({ error: "Canal não encontrado." });
+    const server = db.servers.find((s) => s.id === channel.serverId);
+    if (!server || server.ownerId !== req.userId) {
+      return res.status(403).json({ error: "Só o dono do servidor pode excluir canais." });
+    }
+    db.channels = db.channels.filter((c) => c.id !== req.params.channelId);
+    db.messages = db.messages.filter((m) => m.channelId !== req.params.channelId);
+    persist();
+    res.json({ ok: true });
+  });
+
+  app.delete("/api/servers/:serverId/categories/:categoryId", requireAuth, (req, res) => {
+    const server = db.servers.find((s) => s.id === req.params.serverId);
+    if (!server || server.ownerId !== req.userId) {
+      return res.status(403).json({ error: "Só o dono do servidor pode excluir categorias." });
+    }
+    db.categories = db.categories.filter((c) => c.id !== req.params.categoryId);
+    for (const channel of db.channels) {
+      if (channel.categoryId === req.params.categoryId) channel.categoryId = null;
+    }
+    persist();
+    res.json({ ok: true });
+  });
+
   // ---------- Amigos ----------
 
   app.get("/api/friends", requireAuth, (req, res) => {
