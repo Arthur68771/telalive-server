@@ -32,9 +32,10 @@ async function loadDB() {
     if (!doc.servers) doc.servers = [];
     if (!doc.channels) doc.channels = [];
     if (!doc.messages) doc.messages = [];
+    if (!doc.friendRequests) doc.friendRequests = [];
     return doc;
   }
-  return { users: [], servers: [], channels: [], messages: [] };
+  return { users: [], servers: [], channels: [], messages: [], friendRequests: [] };
 }
 
 async function saveDB(db) {
