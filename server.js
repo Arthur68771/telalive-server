@@ -140,11 +140,16 @@ async function startServer(port = 3000) {
     const muted = new Set(
       (db.users.find((u) => u.id === userId)?.mutedChannelIds) || []
     );
+    const isOwner = server.ownerId === userId;
+    const categories = db.categories.filter(
+      (c) => c.serverId === server.id && (!c.private || isOwner || (c.allowedUserIds || []).includes(userId))
+    );
+    const visibleCategoryIds = new Set(categories.map((c) => c.id));
     return {
       ...server,
-      categories: db.categories.filter((c) => c.serverId === server.id),
+      categories,
       channels: db.channels
-        .filter((c) => c.serverId === server.id)
+        .filter((c) => c.serverId === server.id && (!c.categoryId || visibleCategoryIds.has(c.categoryId)))
         .map((c) => ({ ...c, muted: muted.has(c.id) })),
     };
   }
@@ -205,12 +210,24 @@ async function startServer(port = 3000) {
     res.json(serverWithChannels(server, req.userId));
   });
 
+  app.get("/api/servers/:serverId/members", requireAuth, (req, res) => {
+    const server = db.servers.find((s) => s.id === req.params.serverId);
+    if (!server || !server.members.includes(req.userId)) {
+      return res.status(403).json({ error: "Você não faz parte desse servidor." });
+    }
+    const members = server.members
+      .map((id) => db.users.find((u) => u.id === id))
+      .filter(Boolean)
+      .map(publicUser);
+    res.json(members);
+  });
+
   app.post("/api/servers/:serverId/channels", requireAuth, (req, res) => {
     const server = db.servers.find((s) => s.id === req.params.serverId);
     if (!server || !server.members.includes(req.userId)) {
       return res.status(403).json({ error: "Você não faz parte desse servidor." });
     }
-    const { name, categoryId } = req.body || {};
+    const { name, categoryId, type } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome ao canal." });
 
     const channel = {
@@ -218,6 +235,7 @@ async function startServer(port = 3000) {
       serverId: server.id,
       name: name.trim(),
       categoryId: categoryId || null,
+      type: type === "voice" ? "voice" : "text",
     };
     db.channels.push(channel);
     persist();
@@ -229,10 +247,16 @@ async function startServer(port = 3000) {
     if (!server || !server.members.includes(req.userId)) {
       return res.status(403).json({ error: "Você não faz parte desse servidor." });
     }
-    const { name } = req.body || {};
+    const { name, private: isPrivate, allowedUserIds } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome à categoria." });
 
-    const category = { id: crypto.randomUUID(), serverId: server.id, name: name.trim() };
+    const category = {
+      id: crypto.randomUUID(),
+      serverId: server.id,
+      name: name.trim(),
+      private: !!isPrivate,
+      allowedUserIds: isPrivate && Array.isArray(allowedUserIds) ? allowedUserIds : [],
+    };
     db.categories.push(category);
     persist();
     res.json(category);
