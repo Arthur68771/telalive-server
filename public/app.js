@@ -39,6 +39,7 @@ const callView = document.getElementById("call-view");
 const activeChannelName = document.getElementById("active-channel-name");
 const videoGrid = document.getElementById("video-grid");
 const waitingState = document.getElementById("waiting-state");
+const participantsBar = document.getElementById("participants-bar");
 const waitingText = document.getElementById("waiting-text");
 const statusText = document.getElementById("status-text");
 const shareBtn = document.getElementById("share-btn");
@@ -388,6 +389,7 @@ function selectChannel(channelId, channelName) {
 
   loadMessageHistory(channelId);
   connectToChannel(channelId);
+  renderParticipantsBar();
 }
 
 async function loadMessageHistory(channelId) {
@@ -454,14 +456,16 @@ function connectToChannel(channelId) {
     switch (msg.type) {
       case "entered": {
         selfPeerId = msg.selfId;
-        knownPeers = new Map(msg.peers.map((p) => [p.id, p.username]));
+        knownPeers = new Map(msg.peers.map((p) => [p.id, { username: p.username, avatarDataUrl: p.avatarDataUrl }]));
         updateWaitingText();
+        renderParticipantsBar();
         break;
       }
 
       case "peer-joined": {
-        knownPeers.set(msg.id, msg.username);
+        knownPeers.set(msg.id, { username: msg.username, avatarDataUrl: msg.avatarDataUrl });
         updateWaitingText();
+        renderParticipantsBar();
         // se eu já estiver compartilhando minha tela, o recém-chegado
         // também precisa receber - abro uma conexão nova com ele
         if (localStream) await startShareToPeer(msg.id);
@@ -505,6 +509,7 @@ function connectToChannel(channelId) {
         closePeerConnections(msg.id);
         removeVideoTile(msg.id);
         updateWaitingText();
+        renderParticipantsBar();
         break;
       }
 
@@ -518,9 +523,25 @@ function connectToChannel(channelId) {
 function updateWaitingText() {
   const count = knownPeers.size;
   if (count === 0) {
-    waitingText.textContent = "Aguardando alguém entrar no canal...";
+    waitingText.textContent = "Você é a única pessoa aqui por enquanto...";
   } else {
     waitingText.textContent = `${count} pessoa${count > 1 ? "s" : ""} no canal. Clique em "Compartilhar minha tela" quando quiser.`;
+  }
+}
+
+function renderParticipantsBar() {
+  participantsBar.innerHTML = "";
+
+  const meChip = document.createElement("div");
+  meChip.className = "participant-chip";
+  meChip.innerHTML = `<div class="avatar">${avatarHtml(currentUser?.username, currentUser?.avatarDataUrl)}</div><span>Você</span>`;
+  participantsBar.appendChild(meChip);
+
+  for (const peer of knownPeers.values()) {
+    const chip = document.createElement("div");
+    chip.className = "participant-chip";
+    chip.innerHTML = `<div class="avatar">${avatarHtml(peer.username, peer.avatarDataUrl)}</div><span>${escapeHtml(peer.username)}</span>`;
+    participantsBar.appendChild(chip);
   }
 }
 
@@ -535,7 +556,7 @@ function createPeerConnection(peerId, direction) {
 
   if (direction === "in") {
     conn.ontrack = (event) => {
-      showVideoTile(peerId, knownPeers.get(peerId) || "Alguém", event.streams[0]);
+      showVideoTile(peerId, knownPeers.get(peerId)?.username || "Alguém", event.streams[0]);
     };
   }
 
