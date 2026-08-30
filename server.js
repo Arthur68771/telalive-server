@@ -443,6 +443,7 @@ async function startServer(port = 3000) {
     const author = db.users.find((u) => u.id === userId);
     ws.userId = userId;
     ws.username = author ? author.username : "?";
+    ws.avatarDataUrl = author ? author.avatarDataUrl || author.googlePicture || null : null;
     ws.peerId = crypto.randomUUID();
     ws.channelId = null;
 
@@ -478,6 +479,7 @@ async function startServer(port = 3000) {
         const existingPeers = [...room.values()].map((peer) => ({
           id: peer.peerId,
           username: peer.username,
+          avatarDataUrl: peer.avatarDataUrl,
         }));
 
         room.set(ws.peerId, ws);
@@ -491,7 +493,12 @@ async function startServer(port = 3000) {
 
         for (const peer of room.values()) {
           if (peer !== ws) {
-            send(peer, { type: "peer-joined", id: ws.peerId, username: ws.username });
+            send(peer, {
+              type: "peer-joined",
+              id: ws.peerId,
+              username: ws.username,
+              avatarDataUrl: ws.avatarDataUrl,
+            });
           }
         }
         return;
