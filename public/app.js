@@ -692,3 +692,37 @@ serverIconModalConfirm.addEventListener("click", async () => {
 // ---------- Início ----------
 updateAuthUI();
 tryResumeSession();
+
+// ---------- Login com Google ----------
+const GOOGLE_CLIENT_ID = "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
+
+async function handleGoogleCredential(response) {
+  authStatus.textContent = "";
+  try {
+    const data = await api("/api/auth/google", {
+      method: "POST",
+      body: JSON.stringify({ idToken: response.credential }),
+    });
+    token = data.token;
+    currentUser = data.user;
+    localStorage.setItem("telalive-token", token);
+    enterApp();
+  } catch (err) {
+    authStatus.textContent = err.message;
+  }
+}
+
+function initGoogleButton() {
+  if (!window.google || !window.google.accounts) {
+    setTimeout(initGoogleButton, 300);
+    return;
+  }
+  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential });
+  google.accounts.id.renderButton(document.getElementById("google-signin-btn"), {
+    theme: "filled_black",
+    size: "large",
+    shape: "pill",
+    text: "continue_with",
+  });
+}
+initGoogleButton();
