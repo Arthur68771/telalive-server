@@ -84,6 +84,15 @@ const serverIconModalStatus = document.getElementById("server-icon-modal-status"
 const serverIconModalCancel = document.getElementById("server-icon-modal-cancel");
 const serverIconModalConfirm = document.getElementById("server-icon-modal-confirm");
 
+const friendsBtn = document.getElementById("friends-btn");
+const friendsPanel = document.getElementById("friends-panel");
+const addFriendInput = document.getElementById("add-friend-input");
+const addFriendBtn = document.getElementById("add-friend-btn");
+const addFriendStatus = document.getElementById("add-friend-status");
+const incomingList = document.getElementById("incoming-list");
+const outgoingList = document.getElementById("outgoing-list");
+const friendsList = document.getElementById("friends-list");
+
 let pendingAvatarDataUrl = null;
 let pendingServerIconDataUrl = null;
 
@@ -217,6 +226,8 @@ function renderServerRail() {
 }
 
 function selectServer(serverId) {
+  friendsPanel.style.display = "none";
+  document.querySelector(".channel-panel").style.display = "flex";
   activeServerId = serverId;
   activeChannelId = null;
   leaveCall();
@@ -688,6 +699,105 @@ serverIconModalConfirm.addEventListener("click", async () => {
     serverIconModalStatus.textContent = err.message;
   }
 });
+
+// ---------- Amigos ----------
+friendsBtn.addEventListener("click", () => {
+  activeServerId = null;
+  activeChannelId = null;
+  leaveCall();
+  renderServerRail();
+  document.querySelector(".channel-panel").style.display = "none";
+  friendsPanel.style.display = "flex";
+  loadFriends();
+});
+
+async function loadFriends() {
+  try {
+    const data = await api("/api/friends");
+    renderFriends(data);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function renderFriendRow({ user, requestId, kind }) {
+  const row = document.createElement("div");
+  row.className = "friend-row";
+  const actionsHtml =
+    kind === "incoming"
+      ? `<button class="friend-action-btn accept" data-id="${requestId}">Aceitar</button>
+         <button class="friend-action-btn decline" data-id="${requestId}">Recusar</button>`
+      : kind === "outgoing"
+      ? `<button class="friend-action-btn decline" data-id="${requestId}">Cancelar</button>`
+      : "";
+  row.innerHTML = `
+    <div class="avatar">${avatarHtml(user.username, user.avatarDataUrl)}</div>
+    <div class="friend-name">${escapeHtml(user.username)}</div>
+    <div class="friend-actions">${actionsHtml}</div>
+  `;
+  if (kind === "incoming") {
+    row.querySelector(".accept").addEventListener("click", () => respondFriendRequest(requestId, "accept"));
+    row.querySelector(".decline").addEventListener("click", () => respondFriendRequest(requestId, "decline"));
+  } else if (kind === "outgoing") {
+    row.querySelector(".decline").addEventListener("click", () => respondFriendRequest(requestId, "decline"));
+  }
+  return row;
+}
+
+function renderFriends(data) {
+  incomingList.innerHTML = "";
+  if (data.incoming.length === 0) {
+    incomingList.innerHTML = '<p class="friends-empty">Nenhum pedido recebido.</p>';
+  } else {
+    for (const r of data.incoming) incomingList.appendChild(renderFriendRow({ ...r, kind: "incoming" }));
+  }
+
+  outgoingList.innerHTML = "";
+  if (data.outgoing.length === 0) {
+    outgoingList.innerHTML = '<p class="friends-empty">Nenhum pedido enviado.</p>';
+  } else {
+    for (const r of data.outgoing) outgoingList.appendChild(renderFriendRow({ ...r, kind: "outgoing" }));
+  }
+
+  friendsList.innerHTML = "";
+  if (data.friends.length === 0) {
+    friendsList.innerHTML = '<p class="friends-empty">Você ainda não tem amigos adicionados.</p>';
+  } else {
+    for (const user of data.friends) friendsList.appendChild(renderFriendRow({ user, kind: "friend" }));
+  }
+}
+
+addFriendBtn.addEventListener("click", async () => {
+  const username = addFriendInput.value.trim();
+  if (!username) return;
+  addFriendStatus.textContent = "";
+  try {
+    const result = await api("/api/friends/request", {
+      method: "POST",
+      body: JSON.stringify({ username }),
+    });
+    addFriendInput.value = "";
+    addFriendStatus.textContent = result.autoAccepted ? "Vocês agora são amigos!" : "Pedido enviado!";
+    addFriendStatus.style.color = "var(--success)";
+    loadFriends();
+  } catch (err) {
+    addFriendStatus.style.color = "var(--danger)";
+    addFriendStatus.textContent = err.message;
+  }
+});
+
+addFriendInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") addFriendBtn.click();
+});
+
+async function respondFriendRequest(requestId, action) {
+  try {
+    await api(`/api/friends/${requestId}/${action}`, { method: "POST" });
+    loadFriends();
+  } catch (err) {
+    console.error(err);
+  }
+}
 
 // ---------- Início ----------
 updateAuthUI();
