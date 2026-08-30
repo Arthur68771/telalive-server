@@ -212,7 +212,7 @@ async function loadServers() {
 }
 
 function renderServerRail() {
-  serverRail.querySelectorAll(".server-icon:not(.add-btn)").forEach((el) => el.remove());
+  serverRail.querySelectorAll(".server-icon:not(.add-btn):not(#friends-btn)").forEach((el) => el.remove());
   for (const server of myServers) {
     const icon = document.createElement("div");
     icon.className = "server-icon" + (server.id === activeServerId ? " active" : "");
