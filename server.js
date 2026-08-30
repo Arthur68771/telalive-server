@@ -10,8 +10,12 @@ const { loadDB, saveDB } = require("./db");
 const GOOGLE_CLIENT_ID = "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
-function startServer(port = 3000) {
-  const db = loadDB();
+async function startServer(port = 3000) {
+  const db = await loadDB();
+
+  function persist() {
+    saveDB(db).catch((err) => console.error("Erro ao salvar no banco:", err.message));
+  }
 
   // token -> userId (fica só na memória; ao reiniciar o servidor, todo
   // mundo precisa logar de novo - da pra evoluir isso depois)
@@ -64,7 +68,7 @@ function startServer(port = 3000) {
       passwordHash: await bcrypt.hash(password, 10),
     };
     db.users.push(user);
-    saveDB(db);
+    persist();
 
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, user.id);
@@ -104,7 +108,7 @@ function startServer(port = 3000) {
         passwordHash: null,
       };
       db.users.push(user);
-      saveDB(db);
+      persist();
     }
 
     const token = crypto.randomBytes(24).toString("hex");
@@ -125,7 +129,7 @@ function startServer(port = 3000) {
         return res.status(400).json({ error: "Imagem inválida." });
       }
       user.avatarDataUrl = avatarDataUrl;
-      saveDB(db);
+      persist();
     }
     res.json(publicUser(user));
   });
@@ -160,7 +164,7 @@ function startServer(port = 3000) {
     const generalChannel = { id: crypto.randomUUID(), serverId: server.id, name: "geral" };
     db.channels.push(generalChannel);
 
-    saveDB(db);
+    persist();
     res.json(serverWithChannels(server));
   });
 
@@ -171,7 +175,7 @@ function startServer(port = 3000) {
 
     if (!server.members.includes(req.userId)) {
       server.members.push(req.userId);
-      saveDB(db);
+      persist();
     }
     res.json(serverWithChannels(server));
   });
@@ -190,7 +194,7 @@ function startServer(port = 3000) {
         return res.status(400).json({ error: "Imagem inválida." });
       }
       server.iconDataUrl = iconDataUrl;
-      saveDB(db);
+      persist();
     }
     res.json(serverWithChannels(server));
   });
@@ -205,7 +209,7 @@ function startServer(port = 3000) {
 
     const channel = { id: crypto.randomUUID(), serverId: server.id, name: name.trim() };
     db.channels.push(channel);
-    saveDB(db);
+    persist();
     res.json(channel);
   });
 
@@ -327,7 +331,7 @@ function startServer(port = 3000) {
           createdAt: Date.now(),
         };
         db.messages.push(message);
-        saveDB(db);
+        persist();
 
         const subs = chatSubscribers.get(msg.channelId);
         if (subs) {
