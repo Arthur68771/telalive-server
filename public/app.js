@@ -228,6 +228,7 @@ function renderServerRail() {
 function selectServer(serverId) {
   friendsPanel.style.display = "none";
   document.querySelector(".channel-panel").style.display = "flex";
+  document.querySelector(".main-panel").style.display = "flex";
   activeServerId = serverId;
   activeChannelId = null;
   leaveCall();
@@ -707,6 +708,7 @@ friendsBtn.addEventListener("click", () => {
   leaveCall();
   renderServerRail();
   document.querySelector(".channel-panel").style.display = "none";
+  document.querySelector(".main-panel").style.display = "none";
   friendsPanel.style.display = "flex";
   loadFriends();
 });
