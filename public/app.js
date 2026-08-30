@@ -94,8 +94,15 @@ const outgoingList = document.getElementById("outgoing-list");
 const friendsList = document.getElementById("friends-list");
 
 const newChannelCategory = document.getElementById("new-channel-category");
+const typeTextBtn = document.getElementById("type-text-btn");
+const typeVoiceBtn = document.getElementById("type-voice-btn");
+let selectedChannelType = "text";
+
 const categoryModal = document.getElementById("category-modal");
 const newCategoryName = document.getElementById("new-category-name");
+const newCategoryPrivate = document.getElementById("new-category-private");
+const categoryMembersField = document.getElementById("category-members-field");
+const categoryMembersList = document.getElementById("category-members-list");
 const categoryModalStatus = document.getElementById("category-modal-status");
 const categoryModalCancel = document.getElementById("category-modal-cancel");
 const categoryModalConfirm = document.getElementById("category-modal-confirm");
@@ -312,7 +319,7 @@ function renderChannelItem(channel) {
   const item = document.createElement("div");
   item.className = "channel-item" + (channel.id === activeChannelId ? " active" : "") + (channel.muted ? " muted" : "");
   item.innerHTML = `
-    <span class="hash">#</span><span>${escapeHtml(channel.name)}</span>
+    <span class="hash">${channel.type === "voice" ? "🔊" : "#"}</span><span>${escapeHtml(channel.name)}</span>
     <button class="mute-toggle" title="${channel.muted ? "Reativar" : "Silenciar"}">${channel.muted ? "🔇" : "🔊"}</button>
   `;
   item.addEventListener("click", (e) => {
@@ -365,6 +372,20 @@ function selectChannel(channelId, channelName) {
   shareBtn.classList.remove("hidden");
   stopShareBtn.classList.add("hidden");
   statusText.textContent = "Conectado ao canal";
+
+  const server = myServers.find((s) => s.id === activeServerId);
+  const channel = server?.channels.find((c) => c.id === channelId);
+  const callColumn = document.querySelector(".call-column");
+  const chatColumn = document.querySelector(".chat-column");
+  if (channel?.type === "voice") {
+    callColumn.style.display = "flex";
+    chatColumn.style.display = "none";
+  } else {
+    callColumn.style.display = "none";
+    chatColumn.style.display = "flex";
+    chatColumn.style.width = "100%";
+  }
+
   loadMessageHistory(channelId);
   connectToChannel(channelId);
 }
@@ -661,6 +682,9 @@ addChannelBtn.addEventListener("click", () => {
   channelModal.classList.remove("hidden");
   channelModalStatus.textContent = "";
   newChannelName.value = "";
+  selectedChannelType = "text";
+  typeTextBtn.classList.add("active");
+  typeVoiceBtn.classList.remove("active");
   const server = myServers.find((s) => s.id === activeServerId);
   newChannelCategory.innerHTML = '<option value="">Sem categoria</option>';
   for (const cat of server?.categories || []) {
@@ -670,6 +694,17 @@ addChannelBtn.addEventListener("click", () => {
     newChannelCategory.appendChild(opt);
   }
 });
+
+typeTextBtn.addEventListener("click", () => {
+  selectedChannelType = "text";
+  typeTextBtn.classList.add("active");
+  typeVoiceBtn.classList.remove("active");
+});
+typeVoiceBtn.addEventListener("click", () => {
+  selectedChannelType = "voice";
+  typeVoiceBtn.classList.add("active");
+  typeTextBtn.classList.remove("active");
+});
 channelModalCancel.addEventListener("click", () => channelModal.classList.add("hidden"));
 
 channelModalConfirm.addEventListener("click", async () => {
@@ -677,7 +712,11 @@ channelModalConfirm.addEventListener("click", async () => {
   try {
     await api(`/api/servers/${activeServerId}/channels`, {
       method: "POST",
-      body: JSON.stringify({ name: newChannelName.value.trim(), categoryId: newChannelCategory.value || null }),
+      body: JSON.stringify({
+        name: newChannelName.value.trim(),
+        categoryId: newChannelCategory.value || null,
+        type: selectedChannelType,
+      }),
     });
     await loadServers();
     renderChannelList();
@@ -945,8 +984,39 @@ ctxCreateCategory.addEventListener("click", () => {
   if (contextMenuServerId !== activeServerId) selectServer(contextMenuServerId);
   closeServerContextMenu();
   newCategoryName.value = "";
+  newCategoryPrivate.checked = false;
+  categoryMembersField.classList.add("hidden");
   categoryModalStatus.textContent = "";
   categoryModal.classList.remove("hidden");
+});
+
+newCategoryPrivate.addEventListener("change", async () => {
+  if (!newCategoryPrivate.checked) {
+    categoryMembersField.classList.add("hidden");
+    return;
+  }
+  categoryMembersField.classList.remove("hidden");
+  categoryMembersList.innerHTML = "Carregando...";
+  try {
+    const members = await api(`/api/servers/${activeServerId}/members`);
+    categoryMembersList.innerHTML = "";
+    for (const member of members) {
+      if (member.id === currentUser.id) continue; // dono sempre vê, não precisa marcar
+      const row = document.createElement("label");
+      row.className = "member-check-row";
+      row.innerHTML = `
+        <input type="checkbox" value="${member.id}" />
+        <div class="avatar">${avatarHtml(member.username, member.avatarDataUrl)}</div>
+        <span>${escapeHtml(member.username)}</span>
+      `;
+      categoryMembersList.appendChild(row);
+    }
+    if (categoryMembersList.children.length === 0) {
+      categoryMembersList.innerHTML = '<p class="friends-empty">Ninguém mais nesse servidor ainda.</p>';
+    }
+  } catch (err) {
+    categoryMembersList.innerHTML = "";
+  }
 });
 
 ctxInvite.addEventListener("click", () => {
@@ -969,10 +1039,17 @@ categoryModalCancel.addEventListener("click", () => categoryModal.classList.add(
 
 categoryModalConfirm.addEventListener("click", async () => {
   categoryModalStatus.textContent = "";
+  const allowedUserIds = newCategoryPrivate.checked
+    ? [...categoryMembersList.querySelectorAll("input:checked")].map((el) => el.value)
+    : [];
   try {
     await api(`/api/servers/${activeServerId}/categories`, {
       method: "POST",
-      body: JSON.stringify({ name: newCategoryName.value.trim() }),
+      body: JSON.stringify({
+        name: newCategoryName.value.trim(),
+        private: newCategoryPrivate.checked,
+        allowedUserIds,
+      }),
     });
     await loadServers();
     renderChannelList();
