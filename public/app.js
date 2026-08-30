@@ -107,6 +107,11 @@ const ctxInvite = document.getElementById("ctx-invite");
 const ctxToggleMuted = document.getElementById("ctx-toggle-muted");
 const ctxToggleMutedSwitch = document.getElementById("ctx-toggle-muted-switch");
 
+const itemContextMenu = document.getElementById("item-context-menu");
+const itemCtxCreateChannel = document.getElementById("item-ctx-create-channel");
+const itemCtxDelete = document.getElementById("item-ctx-delete");
+let itemContextTarget = null; // { type: "channel" | "category", id }
+
 let contextMenuServerId = null;
 let hideMutedChannels = localStorage.getItem("telalive-hide-muted") === "1";
 
@@ -293,6 +298,10 @@ function renderChannelList() {
     const header = document.createElement("div");
     header.className = "category-header";
     header.innerHTML = `<span>${escapeHtml(category.name)}</span>`;
+    header.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      openItemContextMenu("category", category.id, e.clientX, e.clientY);
+    });
     channelList.appendChild(header);
     const items = channelsByCategory.get(category.id) || [];
     for (const channel of items) channelList.appendChild(renderChannelItem(channel));
@@ -309,6 +318,10 @@ function renderChannelItem(channel) {
   item.addEventListener("click", (e) => {
     if (e.target.closest(".mute-toggle")) return;
     selectChannel(channel.id, channel.name);
+  });
+  item.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    openItemContextMenu("channel", channel.id, e.clientX, e.clientY);
   });
   item.querySelector(".mute-toggle").addEventListener("click", async (e) => {
     e.stopPropagation();
@@ -882,6 +895,44 @@ function closeServerContextMenu() {
 
 document.addEventListener("click", (e) => {
   if (!serverContextMenu.contains(e.target)) closeServerContextMenu();
+  if (!itemContextMenu.contains(e.target)) itemContextMenu.classList.add("hidden");
+});
+
+function openItemContextMenu(type, id, x, y) {
+  itemContextTarget = { type, id };
+  itemCtxCreateChannel.style.display = type === "category" ? "flex" : "none";
+  itemCtxDelete.querySelector("span").textContent = type === "category" ? "Excluir categoria" : "Excluir canal";
+  itemContextMenu.style.left = `${x}px`;
+  itemContextMenu.style.top = `${y}px`;
+  itemContextMenu.classList.remove("hidden");
+}
+
+itemCtxCreateChannel.addEventListener("click", () => {
+  itemContextMenu.classList.add("hidden");
+  addChannelBtn.click();
+  if (itemContextTarget?.type === "category") newChannelCategory.value = itemContextTarget.id;
+});
+
+itemCtxDelete.addEventListener("click", async () => {
+  itemContextMenu.classList.add("hidden");
+  if (!itemContextTarget) return;
+  try {
+    if (itemContextTarget.type === "channel") {
+      await api(`/api/channels/${itemContextTarget.id}`, { method: "DELETE" });
+      if (activeChannelId === itemContextTarget.id) {
+        activeChannelId = null;
+        leaveCall();
+        emptyState.classList.remove("hidden");
+        callView.classList.add("hidden");
+      }
+    } else {
+      await api(`/api/servers/${activeServerId}/categories/${itemContextTarget.id}`, { method: "DELETE" });
+    }
+    await loadServers();
+    renderChannelList();
+  } catch (err) {
+    alert(err.message);
+  }
 });
 
 ctxCreateChannel.addEventListener("click", () => {
