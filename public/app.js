@@ -15,6 +15,13 @@ let pcsIn = new Map(); // peerId -> RTCPeerConnection (conexões que recebem a t
 let localScreenStream = null;
 let localMicStream = null;
 let micMuted = false;
+let localSpeaking = false;
+let speakingPeers = new Map(); // peerId -> true/false
+let speakingContext = null;
+let speakingAnalyser = null;
+let speakingSource = null;
+let speakingTimer = null;
+let stopSharingInProgress = false;
 
 const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
@@ -463,6 +470,7 @@ function connectToChannel(channelId) {
       case "entered": {
         selfPeerId = msg.selfId;
         knownPeers = new Map(msg.peers.map((p) => [p.id, { username: p.username, avatarDataUrl: p.avatarDataUrl }]));
+        speakingPeers = new Map(msg.peers.map((p) => [p.id, false]));
         updateWaitingText();
         renderParticipantsBar();
         for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
@@ -472,6 +480,7 @@ function connectToChannel(channelId) {
 
       case "peer-joined": {
         knownPeers.set(msg.id, { username: msg.username, avatarDataUrl: msg.avatarDataUrl });
+        speakingPeers.set(msg.id, false);
         updateWaitingText();
         renderParticipantsBar();
         // se eu já tiver microfone ou tela ativos, o recém-chegado
@@ -512,8 +521,22 @@ function connectToChannel(channelId) {
         break;
       }
 
+      case "speaking": {
+        speakingPeers.set(msg.from, !!msg.speaking);
+        renderParticipantsBar();
+        const tile = document.getElementById(`tile-${msg.from}`);
+        if (tile) tile.classList.toggle("speaking", !!msg.speaking);
+        break;
+      }
+
+      case "screen-stopped": {
+        removeVideoTile(msg.from);
+        break;
+      }
+
       case "peer-left": {
         knownPeers.delete(msg.id);
+        speakingPeers.delete(msg.id);
         closePeerConnections(msg.id);
         removeVideoTile(msg.id);
         updateWaitingText();
@@ -541,14 +564,14 @@ function renderParticipantsBar() {
   participantsCircleRow.innerHTML = "";
 
   const meCircle = document.createElement("div");
-  meCircle.className = "participant-circle";
-  meCircle.innerHTML = `<div class="avatar-lg">${avatarHtml(currentUser?.username, currentUser?.avatarDataUrl)}</div><div class="participant-name">Você</div>`;
+  meCircle.className = `participant-circle${localSpeaking ? " speaking" : ""}`;
+  meCircle.innerHTML = `<div class="avatar-lg">${avatarHtml(currentUser?.username, currentUser?.avatarDataUrl)}<span class="speaking-wave" aria-hidden="true"></span></div><div class="participant-name">Você</div>`;
   participantsCircleRow.appendChild(meCircle);
 
-  for (const peer of knownPeers.values()) {
+  for (const [peerId, peer] of knownPeers.entries()) {
     const circle = document.createElement("div");
-    circle.className = "participant-circle";
-    circle.innerHTML = `<div class="avatar-lg">${avatarHtml(peer.username, peer.avatarDataUrl)}</div><div class="participant-name">${escapeHtml(peer.username)}</div>`;
+    circle.className = `participant-circle${speakingPeers.get(peerId) ? " speaking" : ""}`;
+    circle.innerHTML = `<div class="avatar-lg">${avatarHtml(peer.username, peer.avatarDataUrl)}<span class="speaking-wave" aria-hidden="true"></span></div><div class="participant-name">${escapeHtml(peer.username)}</div>`;
     participantsCircleRow.appendChild(circle);
   }
 }
@@ -582,7 +605,7 @@ function showVideoTile(peerId, username, stream) {
   let tile = document.getElementById(`tile-${peerId}`);
   if (!tile) {
     tile = document.createElement("div");
-    tile.className = "video-tile";
+    tile.className = `video-tile${speakingPeers.get(peerId) ? " speaking" : ""}`;
     tile.id = `tile-${peerId}`;
     tile.innerHTML = `<video autoplay playsinline></video><span class="video-tile-label">${escapeHtml(username)}</span>`;
     videoGrid.appendChild(tile);
@@ -646,11 +669,90 @@ async function syncOutgoingTracksToPeer(peerId) {
   }
 }
 
+// ---------- Indicador de fala ----------
+function stopSpeakingMonitor() {
+  if (speakingTimer) {
+    clearInterval(speakingTimer);
+    speakingTimer = null;
+  }
+  if (speakingSource) {
+    try { speakingSource.disconnect(); } catch {}
+    speakingSource = null;
+  }
+  if (speakingAnalyser) {
+    try { speakingAnalyser.disconnect(); } catch {}
+    speakingAnalyser = null;
+  }
+  if (speakingContext) {
+    speakingContext.close().catch(() => {});
+    speakingContext = null;
+  }
+  if (localSpeaking) {
+    localSpeaking = false;
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "speaking", speaking: false }));
+    renderParticipantsBar();
+  }
+}
+
+function startSpeakingMonitor(stream) {
+  stopSpeakingMonitor();
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    speakingContext = new AudioCtx();
+    speakingAnalyser = speakingContext.createAnalyser();
+    speakingAnalyser.fftSize = 512;
+    speakingAnalyser.smoothingTimeConstant = 0.65;
+    speakingSource = speakingContext.createMediaStreamSource(stream);
+    speakingSource.connect(speakingAnalyser);
+    const data = new Uint8Array(speakingAnalyser.fftSize);
+    let lastSent = false;
+    let lastSendAt = 0;
+
+    speakingTimer = setInterval(() => {
+      if (!localMicStream || micMuted) {
+        if (localSpeaking) {
+          localSpeaking = false;
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "speaking", speaking: false }));
+          renderParticipantsBar();
+        }
+        return;
+      }
+      speakingAnalyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = (data[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      const isSpeaking = rms > 0.055;
+      const now = Date.now();
+      if (isSpeaking !== lastSent || now - lastSendAt > 1200) {
+        lastSent = isSpeaking;
+        lastSendAt = now;
+        localSpeaking = isSpeaking;
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "speaking", speaking: isSpeaking }));
+        renderParticipantsBar();
+      }
+    }, 100);
+  } catch (err) {
+    console.warn("Indicador de fala indisponível:", err);
+  }
+}
+
 // ---------- Microfone ----------
 async function ensureMicJoined() {
   if (localMicStream) return;
   try {
-    localMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    localMicStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1
+      }
+    });
+    startSpeakingMonitor(localMicStream);
     for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
   } catch (err) {
     console.error("Não foi possível acessar o microfone:", err);
@@ -664,10 +766,15 @@ micBtn.addEventListener("click", async () => {
   } else {
     micMuted = !micMuted;
     for (const track of localMicStream.getTracks()) track.enabled = !micMuted;
+    if (micMuted) {
+      localSpeaking = false;
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "speaking", speaking: false }));
+      renderParticipantsBar();
+    }
   }
   micBtn.textContent = micMuted ? "🔇" : "🎤";
   micBtn.classList.toggle("off", micMuted);
-  micBtn.title = micMuted ? "Ativar microfone" : "Mutar microfone";
+  micBtn.title = micMuted ? "Ativar microfone" : "Mutar microfone • redução de ruído ativa";
 });
 
 // ---------- Compartilhar tela ----------
@@ -689,20 +796,43 @@ shareBtn.addEventListener("click", async () => {
 
 stopShareBtn.addEventListener("click", stopSharing);
 
-function stopSharing() {
-  if (localScreenStream) {
-    for (const track of localScreenStream.getTracks()) {
-      track.stop();
-      for (const pc of pcsOut.values()) {
-        const sender = pc.getSenders().find((s) => s.track === track);
-        if (sender) pc.removeTrack(sender);
+async function stopSharing() {
+  if (!localScreenStream || stopSharingInProgress) return;
+  stopSharingInProgress = true;
+  const stream = localScreenStream;
+  localScreenStream = null;
+
+  // Avisa imediatamente os outros clientes para removerem a tela da interface.
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "screen-stopped" }));
+  }
+
+  for (const track of stream.getTracks()) track.stop();
+
+  // Remove somente as faixas da tela, preservando o microfone na mesma conexão.
+  for (const [peerId, pc] of pcsOut.entries()) {
+    let changed = false;
+    for (const sender of pc.getSenders()) {
+      if (sender.track && stream.getTracks().some((t) => t.id === sender.track.id)) {
+        pc.removeTrack(sender);
+        changed = true;
+      }
+    }
+    if (changed && ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
+      } catch (err) {
+        console.warn("Não foi possível renegociar após parar a tela:", err);
       }
     }
   }
-  localScreenStream = null;
+
   statusText.textContent = "Compartilhamento parado";
   stopShareBtn.classList.add("hidden");
   shareBtn.classList.remove("hidden");
+  stopSharingInProgress = false;
 }
 
 leaveChannelBtn.addEventListener("click", () => {
@@ -714,6 +844,7 @@ leaveChannelBtn.addEventListener("click", () => {
 });
 
 function leaveCall() {
+  stopSpeakingMonitor();
   if (localScreenStream) for (const track of localScreenStream.getTracks()) track.stop();
   if (localMicStream) for (const track of localMicStream.getTracks()) track.stop();
   for (const pc of pcsOut.values()) pc.close();
@@ -726,6 +857,8 @@ function leaveCall() {
   localScreenStream = null;
   localMicStream = null;
   micMuted = false;
+  localSpeaking = false;
+  speakingPeers.clear();
   micBtn.textContent = "🎤";
   micBtn.classList.remove("off");
   selfPeerId = null;
