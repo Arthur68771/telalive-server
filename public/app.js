@@ -4,6 +4,7 @@ let currentUser = null;
 let myServers = [];
 let activeServerId = null;
 let activeChannelId = null;
+let activeChannelType = "text";
 let authMode = "login"; // ou "register"
 
 let ws = null;
@@ -11,7 +12,9 @@ let selfPeerId = null;
 let knownPeers = new Map(); // peerId -> username (quem está no canal agora)
 let pcsOut = new Map(); // peerId -> RTCPeerConnection (conexões que eu abri pra compartilhar MINHA tela)
 let pcsIn = new Map(); // peerId -> RTCPeerConnection (conexões que recebem a tela de OUTRA pessoa)
-let localStream = null;
+let localScreenStream = null;
+let localMicStream = null;
+let micMuted = false;
 
 const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
@@ -44,6 +47,8 @@ const waitingText = document.getElementById("waiting-text");
 const statusText = document.getElementById("status-text");
 const shareBtn = document.getElementById("share-btn");
 const stopShareBtn = document.getElementById("stop-share-btn");
+const micBtn = document.getElementById("mic-btn");
+const leaveChannelBtn = document.getElementById("leave-channel-btn");
 const chatMessagesEl = document.getElementById("chat-messages");
 const chatEmptyEl = document.getElementById("chat-empty");
 const chatInput = document.getElementById("chat-input");
@@ -376,9 +381,10 @@ function selectChannel(channelId, channelName) {
 
   const server = myServers.find((s) => s.id === activeServerId);
   const channel = server?.channels.find((c) => c.id === channelId);
+  activeChannelType = channel?.type === "voice" ? "voice" : "text";
   const callColumn = document.querySelector(".call-column");
   const chatColumn = document.querySelector(".chat-column");
-  if (channel?.type === "voice") {
+  if (activeChannelType === "voice") {
     callColumn.style.display = "flex";
     chatColumn.style.display = "none";
   } else {
@@ -459,6 +465,8 @@ function connectToChannel(channelId) {
         knownPeers = new Map(msg.peers.map((p) => [p.id, { username: p.username, avatarDataUrl: p.avatarDataUrl }]));
         updateWaitingText();
         renderParticipantsBar();
+        for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
+        if (activeChannelType === "voice") await ensureMicJoined();
         break;
       }
 
@@ -466,9 +474,9 @@ function connectToChannel(channelId) {
         knownPeers.set(msg.id, { username: msg.username, avatarDataUrl: msg.avatarDataUrl });
         updateWaitingText();
         renderParticipantsBar();
-        // se eu já estiver compartilhando minha tela, o recém-chegado
-        // também precisa receber - abro uma conexão nova com ele
-        if (localStream) await startShareToPeer(msg.id);
+        // se eu já tiver microfone ou tela ativos, o recém-chegado
+        // também precisa receber - sincroniza minha mídia com ele
+        await syncOutgoingTracksToPeer(msg.id);
         break;
       }
 
@@ -601,29 +609,79 @@ function closePeerConnections(peerId) {
   }
 }
 
-async function startShareToPeer(peerId) {
-  const pcOut = createPeerConnection(peerId, "out");
-  for (const track of localStream.getTracks()) pcOut.addTrack(track, localStream);
-  pcsOut.set(peerId, pcOut);
+// Garante que essa pessoa recebe TODA a minha mídia ativa no momento
+// (microfone e/ou tela). Reaproveita a mesma conexão pra tudo, e
+// renegocia (manda uma nova oferta) sempre que adiciona alguma faixa nova.
+async function syncOutgoingTracksToPeer(peerId) {
+  let pc = pcsOut.get(peerId);
+  if (!pc) {
+    pc = createPeerConnection(peerId, "out");
+    pcsOut.set(peerId, pc);
+  }
 
-  const offer = await pcOut.createOffer();
-  await pcOut.setLocalDescription(offer);
-  ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
+  const existingTrackIds = new Set(pc.getSenders().map((s) => s.track?.id).filter(Boolean));
+  let addedAny = false;
+
+  if (localMicStream) {
+    for (const track of localMicStream.getTracks()) {
+      if (!existingTrackIds.has(track.id)) {
+        pc.addTrack(track, localMicStream);
+        addedAny = true;
+      }
+    }
+  }
+  if (localScreenStream) {
+    for (const track of localScreenStream.getTracks()) {
+      if (!existingTrackIds.has(track.id)) {
+        pc.addTrack(track, localScreenStream);
+        addedAny = true;
+      }
+    }
+  }
+
+  if (addedAny) {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
+  }
 }
 
+// ---------- Microfone ----------
+async function ensureMicJoined() {
+  if (localMicStream) return;
+  try {
+    localMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
+  } catch (err) {
+    console.error("Não foi possível acessar o microfone:", err);
+  }
+}
+
+micBtn.addEventListener("click", async () => {
+  if (!localMicStream) {
+    await ensureMicJoined();
+    micMuted = false;
+  } else {
+    micMuted = !micMuted;
+    for (const track of localMicStream.getTracks()) track.enabled = !micMuted;
+  }
+  micBtn.textContent = micMuted ? "🔇" : "🎤";
+  micBtn.classList.toggle("off", micMuted);
+  micBtn.title = micMuted ? "Ativar microfone" : "Mutar microfone";
+});
+
+// ---------- Compartilhar tela ----------
 shareBtn.addEventListener("click", async () => {
   try {
-    localStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
+    localScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
 
-    for (const peerId of knownPeers.keys()) {
-      await startShareToPeer(peerId);
-    }
+    for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
 
     shareBtn.classList.add("hidden");
     stopShareBtn.classList.remove("hidden");
     statusText.textContent = "Transmitindo sua tela";
 
-    localStream.getVideoTracks()[0].onended = () => stopSharing();
+    localScreenStream.getVideoTracks()[0].onended = () => stopSharing();
   } catch (err) {
     console.error(err);
   }
@@ -632,17 +690,32 @@ shareBtn.addEventListener("click", async () => {
 stopShareBtn.addEventListener("click", stopSharing);
 
 function stopSharing() {
-  if (localStream) for (const track of localStream.getTracks()) track.stop();
-  for (const pc of pcsOut.values()) pc.close();
-  pcsOut.clear();
-  localStream = null;
+  if (localScreenStream) {
+    for (const track of localScreenStream.getTracks()) {
+      track.stop();
+      for (const pc of pcsOut.values()) {
+        const sender = pc.getSenders().find((s) => s.track === track);
+        if (sender) pc.removeTrack(sender);
+      }
+    }
+  }
+  localScreenStream = null;
   statusText.textContent = "Compartilhamento parado";
   stopShareBtn.classList.add("hidden");
   shareBtn.classList.remove("hidden");
 }
 
+leaveChannelBtn.addEventListener("click", () => {
+  leaveCall();
+  activeChannelId = null;
+  renderChannelList();
+  emptyState.classList.remove("hidden");
+  callView.classList.add("hidden");
+});
+
 function leaveCall() {
-  if (localStream) for (const track of localStream.getTracks()) track.stop();
+  if (localScreenStream) for (const track of localScreenStream.getTracks()) track.stop();
+  if (localMicStream) for (const track of localMicStream.getTracks()) track.stop();
   for (const pc of pcsOut.values()) pc.close();
   for (const pc of pcsIn.values()) pc.close();
   pcsOut.clear();
@@ -650,7 +723,11 @@ function leaveCall() {
   knownPeers.clear();
   if (ws) ws.close();
   ws = null;
-  localStream = null;
+  localScreenStream = null;
+  localMicStream = null;
+  micMuted = false;
+  micBtn.textContent = "🎤";
+  micBtn.classList.remove("off");
   selfPeerId = null;
 }
 
