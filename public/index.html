@@ -154,6 +154,15 @@
     display: flex; align-items: center; gap: 7px; padding: 8px 10px; border-radius: 8px;
     color: var(--muted); cursor: pointer; font-size: 0.92rem; margin-bottom: 2px;
   }
+
+  .channel-wrap { width: 100%; }
+  .channel-item { margin-bottom: 1px; }
+  .channel-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .channel-presence { padding: 2px 10px 8px 34px; display: flex; flex-direction: column; gap: 5px; }
+  .channel-presence-user { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: .78rem; line-height: 26px; }
+  .channel-presence-user > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .channel-presence-avatar { width: 24px; height: 24px; flex: 0 0 24px; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--accent); color: white; font-size: .62rem; font-weight: 700; }
+  .channel-presence-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
   .channel-item:hover { background: var(--elevated); color: var(--text); }
   .channel-item.active { background: var(--elevated); color: var(--text); font-weight: 600; }
   .channel-item .hash { opacity: 0.6; }
@@ -190,7 +199,6 @@
     border: 1px solid var(--border); aspect-ratio: 16/9;
   }
   .video-tile video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
-  .video-tile.speaking { border-color: var(--success); box-shadow: 0 0 0 2px rgba(34,197,94,.18), 0 0 20px rgba(34,197,94,.20); }
   .video-tile-label {
     position: absolute; left: 10px; bottom: 10px; background: rgba(0,0,0,0.6);
     padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 600;
@@ -206,20 +214,12 @@
   .participants-circle-row { display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; }
   .participant-circle { display: flex; flex-direction: column; align-items: center; gap: 10px; }
   .participant-circle .avatar-lg {
-    width: 84px; height: 84px; border-radius: 50%; overflow: visible; background: var(--accent);
-    position: relative; display: flex; align-items: center; justify-content: center; font-size: 1.7rem; font-weight: 700;
-    color: white; border: 3px solid var(--elevated); transition: border-color .15s, box-shadow .15s, transform .15s;
+    width: 84px; height: 84px; border-radius: 50%; overflow: hidden; background: var(--accent);
+    display: flex; align-items: center; justify-content: center; font-size: 1.7rem; font-weight: 700;
+    color: white; border: 3px solid var(--elevated);
   }
-  .participant-circle .avatar-lg img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+  .participant-circle .avatar-lg img { width: 100%; height: 100%; object-fit: cover; }
   .participant-circle .participant-name { font-size: 0.9rem; font-weight: 600; color: var(--text); }
-  .participant-circle.speaking .avatar-lg {
-    border-color: var(--success);
-    box-shadow: 0 0 0 4px rgba(34,197,94,.20), 0 0 22px rgba(34,197,94,.42);
-    transform: scale(1.04);
-  }
-  .speaking-wave { position: absolute; inset: -7px; border-radius: 50%; border: 2px solid transparent; pointer-events: none; }
-  .participant-circle.speaking .speaking-wave { border-color: var(--success); animation: speaking-ring 1s ease-out infinite; }
-  @keyframes speaking-ring { 0% { transform: scale(.92); opacity: .9; } 100% { transform: scale(1.16); opacity: 0; } }
 
   .controlbar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 16px; flex-shrink: 0; }
   .control-round-btn {
@@ -232,10 +232,6 @@
   .control-round-btn.off:hover { background: var(--danger-hover); }
   .control-round-btn.hangup { background: var(--danger); border-color: transparent; color: white; }
   .control-round-btn.hangup:hover { background: var(--danger-hover); }
-  .audio-feature {
-    padding: 9px 11px; border-radius: 999px; border: 1px solid var(--border);
-    background: var(--elevated); color: var(--muted); font-size: 0.72rem; white-space: nowrap;
-  }
   .control-btn {
     display: flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 10px;
     border: 1px solid var(--border); background: var(--elevated); color: var(--text);
@@ -472,8 +468,7 @@
             </div>
           </div>
           <div class="controlbar">
-            <button class="control-round-btn" id="mic-btn" title="Mutar/ativar microfone • redução de ruído ativa">🎤</button>
-            <span class="audio-feature" title="Processamento do microfone: cancelamento de eco, redução de ruído e ganho automático">🎙️ Redução de ruído</span>
+            <button class="control-round-btn" id="mic-btn" title="Mutar/ativar microfone">🎤</button>
             <button class="control-btn primary" id="share-btn">Compartilhar minha tela</button>
             <button class="control-btn danger hidden" id="stop-share-btn">Parar compartilhamento</button>
             <button class="control-round-btn hangup" id="leave-channel-btn" title="Sair do canal">📞</button>
