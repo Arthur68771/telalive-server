@@ -415,6 +415,34 @@ async function startServer(port = 3000) {
     res.json(msgs);
   });
 
+  // ---------- Presença dos canais de voz ----------
+  // Usado pela barra lateral para mostrar, como no Discord, quem está em cada canal de voz.
+  app.get("/api/servers/:serverId/voice-presence", requireAuth, (req, res) => {
+    const server = db.servers.find((s) => s.id === req.params.serverId);
+    if (!server || !server.members.includes(req.userId)) {
+      return res.status(403).json({ error: "Você não faz parte desse servidor." });
+    }
+
+    const voiceChannelIds = new Set(
+      db.channels
+        .filter((c) => c.serverId === server.id && c.type === "voice")
+        .map((c) => c.id)
+    );
+
+    const result = [];
+    for (const [channelId, room] of callRooms.entries()) {
+      if (!voiceChannelIds.has(channelId)) continue;
+      const users = [...room.values()].map((peer) => ({
+        id: peer.userId,
+        username: peer.username,
+        avatarDataUrl: peer.avatarDataUrl || null,
+      }));
+      result.push({ channelId, users });
+    }
+
+    res.json({ channels: result });
+  });
+
   // ---------- WebSocket: chat em tempo real + sinalização WebRTC ----------
   // "callRooms" cuida da chamada de vídeo/tela - agora suporta várias
   // pessoas ao mesmo tempo: cada pessoa se conecta diretamente com
@@ -529,7 +557,7 @@ async function startServer(port = 3000) {
         return;
       }
 
-      if (["offer", "answer", "ice-candidate", "speaking", "screen-stopped"].includes(msg.type)) {
+      if (["offer", "answer", "ice-candidate"].includes(msg.type)) {
         const room = callRooms.get(ws.channelId);
         if (!room) return;
         const target = room.get(msg.target);
