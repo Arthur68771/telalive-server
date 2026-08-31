@@ -181,7 +181,7 @@
     padding: 20px; min-height: 0; position: relative; overflow: auto;
   }
   .video-grid {
-    display: grid; gap: 14px; width: 100%; height: 100%;
+    position: absolute; inset: 20px; display: grid; gap: 14px;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     align-content: center;
   }
@@ -212,7 +212,17 @@
   .participant-circle .avatar-lg img { width: 100%; height: 100%; object-fit: cover; }
   .participant-circle .participant-name { font-size: 0.9rem; font-weight: 600; color: var(--text); }
 
-  .controlbar { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 16px; flex-shrink: 0; }
+  .controlbar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 16px; flex-shrink: 0; }
+  .control-round-btn {
+    width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border);
+    background: var(--elevated); color: var(--text); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 1.1rem;
+  }
+  .control-round-btn:hover { background: var(--elevated-hover); }
+  .control-round-btn.off { background: var(--danger); border-color: transparent; color: white; }
+  .control-round-btn.off:hover { background: var(--danger-hover); }
+  .control-round-btn.hangup { background: var(--danger); border-color: transparent; color: white; }
+  .control-round-btn.hangup:hover { background: var(--danger-hover); }
   .control-btn {
     display: flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 10px;
     border: 1px solid var(--border); background: var(--elevated); color: var(--text);
@@ -449,8 +459,10 @@
             </div>
           </div>
           <div class="controlbar">
+            <button class="control-round-btn" id="mic-btn" title="Mutar/ativar microfone">🎤</button>
             <button class="control-btn primary" id="share-btn">Compartilhar minha tela</button>
             <button class="control-btn danger hidden" id="stop-share-btn">Parar compartilhamento</button>
+            <button class="control-round-btn hangup" id="leave-channel-btn" title="Sair do canal">📞</button>
           </div>
         </div>
         <div class="chat-column">
