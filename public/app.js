@@ -587,7 +587,27 @@ function createPeerConnection(peerId, direction) {
 
   if (direction === "in") {
     conn.ontrack = (event) => {
-      showVideoTile(peerId, knownPeers.get(peerId)?.username || "Alguém", event.streams[0]);
+      const stream = event.streams[0] || new MediaStream([event.track]);
+      const track = event.track;
+
+      // O compartilhamento de tela pode ser encerrado pelo outro usuário
+      // sem fechar a chamada. Quando o vídeo remoto terminar/for mutado,
+      // removemos o quadro em vez de deixar a última imagem congelada.
+      if (track.kind === "video") {
+        const clearIfNoLiveVideo = () => {
+          const liveVideo = stream.getVideoTracks().some((t) => t.readyState === "live" && !t.muted);
+          if (!liveVideo) removeVideoTile(peerId);
+        };
+        track.addEventListener("ended", () => removeVideoTile(peerId), { once: true });
+        track.addEventListener("mute", () => {
+          setTimeout(clearIfNoLiveVideo, 120);
+        });
+        track.addEventListener("unmute", () => {
+          showVideoTile(peerId, knownPeers.get(peerId)?.username || "Alguém", stream);
+        });
+      }
+
+      showVideoTile(peerId, knownPeers.get(peerId)?.username || "Alguém", stream);
     };
   }
 
@@ -802,22 +822,32 @@ async function stopSharing() {
   const stream = localScreenStream;
   localScreenStream = null;
 
-  // Avisa imediatamente os outros clientes para removerem a tela da interface.
+  // Avisa cada cliente imediatamente. Antes era enviado sem "target",
+  // mas o servidor só encaminha mensagens que possuem um alvo; por isso
+  // o outro usuário ficava vendo a última imagem congelada.
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "screen-stopped" }));
+    for (const peerId of pcsOut.keys()) {
+      ws.send(JSON.stringify({ type: "screen-stopped", target: peerId }));
+    }
   }
 
-  for (const track of stream.getTracks()) track.stop();
-
-  // Remove somente as faixas da tela, preservando o microfone na mesma conexão.
+  const screenTrackIds = new Set(stream.getVideoTracks().map((t) => t.id));
   for (const [peerId, pc] of pcsOut.entries()) {
     let changed = false;
     for (const sender of pc.getSenders()) {
-      if (sender.track && stream.getTracks().some((t) => t.id === sender.track.id)) {
-        pc.removeTrack(sender);
+      if (sender.track && screenTrackIds.has(sender.track.id)) {
+        // Mantém o mesmo transceiver para facilitar o próximo compartilhamento,
+        // mas deixa o vídeo sem faixa imediatamente.
+        try {
+          await sender.replaceTrack(null);
+        } catch {
+          pc.removeTrack(sender);
+        }
         changed = true;
       }
     }
+
+    for (const track of stream.getTracks()) track.stop();
     if (changed && ws && ws.readyState === WebSocket.OPEN) {
       try {
         const offer = await pc.createOffer();
