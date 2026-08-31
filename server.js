@@ -529,7 +529,7 @@ async function startServer(port = 3000) {
         return;
       }
 
-      if (["offer", "answer", "ice-candidate"].includes(msg.type)) {
+      if (["offer", "answer", "ice-candidate", "speaking", "screen-stopped"].includes(msg.type)) {
         const room = callRooms.get(ws.channelId);
         if (!room) return;
         const target = room.get(msg.target);
