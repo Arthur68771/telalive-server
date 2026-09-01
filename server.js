@@ -123,7 +123,20 @@ async function startServer(port = 3000) {
 
   app.patch("/api/me", requireAuth, (req, res) => {
     const user = db.users.find((u) => u.id === req.userId);
-    const { avatarDataUrl } = req.body || {};
+    const { avatarDataUrl, username } = req.body || {};
+
+    if (typeof username === "string" && username.trim() !== user.username) {
+      const clean = username.trim();
+      if (clean.length < 3) {
+        return res.status(400).json({ error: "Nome de usuário precisa ter pelo menos 3 letras." });
+      }
+      if (db.users.some((u) => u.id !== user.id && u.username.toLowerCase() === clean.toLowerCase())) {
+        return res.status(400).json({ error: "Esse nome de usuário já existe." });
+      }
+      user.username = clean;
+      persist();
+    }
+
     if (typeof avatarDataUrl === "string") {
       if (!avatarDataUrl.startsWith("data:image/")) {
         return res.status(400).json({ error: "Imagem inválida." });
