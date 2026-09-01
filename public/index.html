@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>TelaLive</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
-<script src="https://cdn.jsdelivr.net/npm/@shiguredo/noise-suppression@latest/dist/noise_suppression.js"></script>
+<script type="module">
+  import * as Shiguredo from "https://cdn.jsdelivr.net/npm/@shiguredo/noise-suppression@latest/dist/noise_suppression.js";
+  window.Shiguredo = Shiguredo;
+</script>
 <style>
   :root {
     --bg: #121319;
@@ -268,6 +271,24 @@
   }
   .chat-send-btn:hover { background: var(--accent-hover); }
 
+  .chat-attach-btn {
+    width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--elevated); color: var(--muted); font-size: 1.3rem; cursor: pointer; flex-shrink: 0;
+  }
+  .chat-attach-btn:hover { background: var(--elevated-hover); color: var(--text); }
+  .chat-image-preview {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--border);
+  }
+  .chat-image-preview img { height: 56px; border-radius: 8px; object-fit: cover; }
+  .chat-image-preview button {
+    background: var(--elevated); border: none; color: var(--muted); width: 26px; height: 26px;
+    border-radius: 50%; cursor: pointer; flex-shrink: 0;
+  }
+  .chat-image-preview button:hover { background: var(--danger); color: white; }
+  .chat-msg-image {
+    max-width: 260px; max-height: 260px; border-radius: 10px; margin-top: 6px; cursor: pointer; display: block;
+  }
+
   /* ---------- Modal simples (criar/entrar em servidor, criar canal) ---------- */
   .modal-backdrop {
     position: fixed; inset: 0; background: rgba(0,0,0,0.5);
@@ -475,7 +496,13 @@
           <div class="chat-messages" id="chat-messages">
             <p class="chat-empty" id="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>
           </div>
+          <div class="chat-image-preview hidden" id="chat-image-preview">
+            <img id="chat-image-preview-img" alt="" />
+            <button id="chat-image-preview-remove" title="Remover imagem">✕</button>
+          </div>
           <div class="chat-input-row">
+            <button class="chat-attach-btn" id="chat-attach-btn" title="Anexar imagem">+</button>
+            <input type="file" accept="image/*" id="chat-image-input" class="hidden" />
             <input id="chat-input" placeholder="Escreva uma mensagem..." maxlength="2000" />
             <button class="chat-send-btn" id="chat-send-btn">Enviar</button>
           </div>
