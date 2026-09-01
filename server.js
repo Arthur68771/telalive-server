@@ -7,613 +7,1836 @@ const bcrypt = require("bcryptjs");
 const { OAuth2Client } = require("google-auth-library");
 const { loadDB, saveDB } = require("./db");
 
-const GOOGLE_CLIENT_ID = "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID =
+  "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
+
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 async function startServer(port = 3000) {
   const db = await loadDB();
 
   function persist() {
-    saveDB(db).catch((err) => console.error("Erro ao salvar no banco:", err.message));
+    saveDB(db).catch((err) =>
+      console.error("Erro ao salvar no banco:", err.message)
+    );
   }
 
-  // token -> userId (fica só na memória; ao reiniciar o servidor, todo
-  // mundo precisa logar de novo - da pra evoluir isso depois)
   const sessions = new Map();
 
   const app = express();
+
   app.use(express.json({ limit: "2mb" }));
   app.use(express.static(path.join(__dirname, "public")));
 
-  // ---------- Autenticação ----------
+  // ---------- AUTENTICAÇÃO ----------
 
   function requireAuth(req, res, next) {
     const header = req.headers.authorization || "";
     const token = header.replace("Bearer ", "");
+
     const userId = sessions.get(token);
-    if (!userId) return res.status(401).json({ error: "Não autenticado." });
+
+    if (!userId) {
+      return res.status(401).json({
+        error: "Não autenticado."
+      });
+    }
+
     req.userId = userId;
     next();
   }
 
   function publicUser(user) {
-    return { id: user.id, username: user.username, avatarDataUrl: user.avatarDataUrl || user.googlePicture || null };
+    return {
+      id: user.id,
+      username: user.username,
+      avatarDataUrl:
+        user.avatarDataUrl ||
+        user.googlePicture ||
+        null
+    };
   }
 
   function uniqueUsernameFrom(base) {
-    let candidate = base.trim().slice(0, 24) || "usuario";
+    let candidate =
+      base.trim().slice(0, 24) || "usuario";
+
     let suffix = 0;
-    while (db.users.some((u) => u.username.toLowerCase() === candidate.toLowerCase())) {
-      suffix += 1;
-      candidate = `${base.slice(0, 20)}${suffix}`;
+
+    while (
+      db.users.some(
+        (u) =>
+          u.username.toLowerCase() ===
+          candidate.toLowerCase()
+      )
+    ) {
+      suffix++;
+
+      candidate =
+        `${base.slice(0, 20)}${suffix}`;
     }
+
     return candidate;
   }
 
   app.post("/api/register", async (req, res) => {
     const { username, password } = req.body || {};
+
     if (!username || username.trim().length < 3) {
-      return res.status(400).json({ error: "Nome de usuário precisa ter pelo menos 3 letras." });
+      return res.status(400).json({
+        error:
+          "Nome de usuário precisa ter pelo menos 3 letras."
+      });
     }
+
     if (!password || password.length < 4) {
-      return res.status(400).json({ error: "Senha precisa ter pelo menos 4 caracteres." });
+      return res.status(400).json({
+        error:
+          "Senha precisa ter pelo menos 4 caracteres."
+      });
     }
+
     const clean = username.trim();
-    if (db.users.some((u) => u.username.toLowerCase() === clean.toLowerCase())) {
-      return res.status(400).json({ error: "Esse nome de usuário já existe." });
+
+    if (
+      db.users.some(
+        (u) =>
+          u.username.toLowerCase() ===
+          clean.toLowerCase()
+      )
+    ) {
+      return res.status(400).json({
+        error: "Esse nome de usuário já existe."
+      });
     }
+
     const user = {
       id: crypto.randomUUID(),
       username: clean,
-      passwordHash: await bcrypt.hash(password, 10),
+      passwordHash: await bcrypt.hash(password, 10)
     };
+
     db.users.push(user);
+
     persist();
 
-    const token = crypto.randomBytes(24).toString("hex");
+    const token =
+      crypto.randomBytes(24).toString("hex");
+
     sessions.set(token, user.id);
-    res.json({ token, user: publicUser(user) });
+
+    res.json({
+      token,
+      user: publicUser(user)
+    });
   });
 
   app.post("/api/login", async (req, res) => {
     const { username, password } = req.body || {};
-    const user = db.users.find((u) => u.username.toLowerCase() === (username || "").trim().toLowerCase());
-    if (!user || !user.passwordHash || !(await bcrypt.compare(password || "", user.passwordHash))) {
-      return res.status(401).json({ error: "Usuário ou senha incorretos." });
+
+    const user = db.users.find(
+      (u) =>
+        u.username.toLowerCase() ===
+        (username || "")
+          .trim()
+          .toLowerCase()
+    );
+
+    if (
+      !user ||
+      !user.passwordHash ||
+      !(await bcrypt.compare(
+        password || "",
+        user.passwordHash
+      ))
+    ) {
+      return res.status(401).json({
+        error:
+          "Usuário ou senha incorretos."
+      });
     }
-    const token = crypto.randomBytes(24).toString("hex");
+
+    const token =
+      crypto.randomBytes(24).toString("hex");
+
     sessions.set(token, user.id);
-    res.json({ token, user: publicUser(user) });
+
+    res.json({
+      token,
+      user: publicUser(user)
+    });
   });
 
   app.post("/api/auth/google", async (req, res) => {
     const { idToken } = req.body || {};
-    if (!idToken) return res.status(400).json({ error: "Token do Google ausente." });
 
-    let payload;
-    try {
-      const ticket = await googleClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
-      payload = ticket.getPayload();
-    } catch {
-      return res.status(401).json({ error: "Não foi possível verificar sua conta do Google." });
+    if (!idToken) {
+      return res.status(400).json({
+        error: "Token do Google ausente."
+      });
     }
 
-    let user = db.users.find((u) => u.googleId === payload.sub);
+    let payload;
+
+    try {
+      const ticket =
+        await googleClient.verifyIdToken({
+          idToken,
+          audience: GOOGLE_CLIENT_ID
+        });
+
+      payload = ticket.getPayload();
+    } catch {
+      return res.status(401).json({
+        error:
+          "Não foi possível verificar sua conta do Google."
+      });
+    }
+
+    let user = db.users.find(
+      (u) =>
+        u.googleId === payload.sub
+    );
+
     if (!user) {
       user = {
         id: crypto.randomUUID(),
-        username: uniqueUsernameFrom(payload.name || payload.email.split("@")[0]),
+
+        username: uniqueUsernameFrom(
+          payload.name ||
+          payload.email.split("@")[0]
+        ),
+
         googleId: payload.sub,
-        googlePicture: payload.picture || null,
-        passwordHash: null,
+
+        googlePicture:
+          payload.picture || null,
+
+        passwordHash: null
       };
+
       db.users.push(user);
+
       persist();
     }
 
-    const token = crypto.randomBytes(24).toString("hex");
+    const token =
+      crypto.randomBytes(24).toString("hex");
+
     sessions.set(token, user.id);
-    res.json({ token, user: publicUser(user) });
+
+    res.json({
+      token,
+      user: publicUser(user)
+    });
   });
 
   app.get("/api/me", requireAuth, (req, res) => {
-    const user = db.users.find((u) => u.id === req.userId);
+    const user = db.users.find(
+      (u) =>
+        u.id === req.userId
+    );
+
     res.json(publicUser(user));
   });
 
   app.patch("/api/me", requireAuth, (req, res) => {
-    const user = db.users.find((u) => u.id === req.userId);
-    const { avatarDataUrl, username } = req.body || {};
+    const user = db.users.find(
+      (u) =>
+        u.id === req.userId
+    );
 
-    if (typeof username === "string" && username.trim() !== user.username) {
-      const clean = username.trim();
-      if (clean.length < 3) {
-        return res.status(400).json({ error: "Nome de usuário precisa ter pelo menos 3 letras." });
+    const { avatarDataUrl } =
+      req.body || {};
+
+    if (
+      typeof avatarDataUrl === "string"
+    ) {
+      if (
+        !avatarDataUrl.startsWith(
+          "data:image/"
+        )
+      ) {
+        return res.status(400).json({
+          error: "Imagem inválida."
+        });
       }
-      if (db.users.some((u) => u.id !== user.id && u.username.toLowerCase() === clean.toLowerCase())) {
-        return res.status(400).json({ error: "Esse nome de usuário já existe." });
-      }
-      user.username = clean;
+
+      user.avatarDataUrl =
+        avatarDataUrl;
+
       persist();
     }
 
-    if (typeof avatarDataUrl === "string") {
-      if (!avatarDataUrl.startsWith("data:image/")) {
-        return res.status(400).json({ error: "Imagem inválida." });
-      }
-      user.avatarDataUrl = avatarDataUrl;
-      persist();
-    }
     res.json(publicUser(user));
   });
 
-  // ---------- Servidores e canais ----------
+  // ---------- SERVIDORES E CANAIS ----------
 
-  function serverWithChannels(server, userId) {
+  function serverWithChannels(
+    server,
+    userId
+  ) {
     const muted = new Set(
-      (db.users.find((u) => u.id === userId)?.mutedChannelIds) || []
+      (
+        db.users.find(
+          (u) =>
+            u.id === userId
+        )?.mutedChannelIds
+      ) || []
     );
-    const isOwner = server.ownerId === userId;
-    const categories = db.categories.filter(
-      (c) => c.serverId === server.id && (!c.private || isOwner || (c.allowedUserIds || []).includes(userId))
-    );
-    const visibleCategoryIds = new Set(categories.map((c) => c.id));
+
+    const isOwner =
+      server.ownerId === userId;
+
+    const categories =
+      db.categories.filter(
+        (c) =>
+          c.serverId === server.id &&
+          (
+            !c.private ||
+            isOwner ||
+            (c.allowedUserIds || [])
+              .includes(userId)
+          )
+      );
+
+    const visibleCategoryIds =
+      new Set(
+        categories.map(
+          (c) => c.id
+        )
+      );
+
     return {
       ...server,
+
       categories,
-      channels: db.channels
-        .filter((c) => c.serverId === server.id && (!c.categoryId || visibleCategoryIds.has(c.categoryId)))
-        .map((c) => ({ ...c, muted: muted.has(c.id) })),
+
+      channels:
+        db.channels
+          .filter(
+            (c) =>
+              c.serverId === server.id &&
+              (
+                !c.categoryId ||
+                visibleCategoryIds.has(
+                  c.categoryId
+                )
+              )
+          )
+          .map(
+            (c) => ({
+              ...c,
+              muted:
+                muted.has(c.id)
+            })
+          )
     };
   }
 
-  app.get("/api/servers", requireAuth, (req, res) => {
-    const mine = db.servers.filter((s) => s.members.includes(req.userId));
-    res.json(mine.map((s) => serverWithChannels(s, req.userId)));
-  });
+  app.get(
+    "/api/servers",
+    requireAuth,
+    (req, res) => {
+      const mine =
+        db.servers.filter(
+          (s) =>
+            s.members.includes(
+              req.userId
+            )
+        );
 
-  app.post("/api/servers", requireAuth, (req, res) => {
-    const { name } = req.body || {};
-    if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome ao servidor." });
-
-    const server = {
-      id: crypto.randomUUID(),
-      name: name.trim(),
-      ownerId: req.userId,
-      inviteCode: crypto.randomBytes(4).toString("hex"),
-      members: [req.userId],
-    };
-    db.servers.push(server);
-
-    const generalChannel = { id: crypto.randomUUID(), serverId: server.id, name: "geral", categoryId: null };
-    db.channels.push(generalChannel);
-
-    persist();
-    res.json(serverWithChannels(server, req.userId));
-  });
-
-  app.post("/api/servers/join", requireAuth, (req, res) => {
-    const { inviteCode } = req.body || {};
-    const server = db.servers.find((s) => s.inviteCode === (inviteCode || "").trim());
-    if (!server) return res.status(404).json({ error: "Código de convite inválido." });
-
-    if (!server.members.includes(req.userId)) {
-      server.members.push(req.userId);
-      persist();
+      res.json(
+        mine.map(
+          (s) =>
+            serverWithChannels(
+              s,
+              req.userId
+            )
+        )
+      );
     }
-    res.json(serverWithChannels(server, req.userId));
-  });
+  );
 
-  app.patch("/api/servers/:serverId", requireAuth, (req, res) => {
-    const server = db.servers.find((s) => s.id === req.params.serverId);
-    if (!server || !server.members.includes(req.userId)) {
-      return res.status(403).json({ error: "Você não faz parte desse servidor." });
-    }
-    if (server.ownerId !== req.userId) {
-      return res.status(403).json({ error: "Só o dono do servidor pode mudar o ícone." });
-    }
-    const { iconDataUrl } = req.body || {};
-    if (typeof iconDataUrl === "string") {
-      if (!iconDataUrl.startsWith("data:image/")) {
-        return res.status(400).json({ error: "Imagem inválida." });
+  app.post(
+    "/api/servers",
+    requireAuth,
+    (req, res) => {
+      const { name } =
+        req.body || {};
+
+      if (
+        !name ||
+        !name.trim()
+      ) {
+        return res.status(400).json({
+          error:
+            "Dê um nome ao servidor."
+        });
       }
-      server.iconDataUrl = iconDataUrl;
+
+      const server = {
+        id: crypto.randomUUID(),
+        name: name.trim(),
+        ownerId: req.userId,
+
+        inviteCode:
+          crypto.randomBytes(4)
+            .toString("hex"),
+
+        members: [
+          req.userId
+        ]
+      };
+
+      db.servers.push(server);
+
+      const generalChannel = {
+        id: crypto.randomUUID(),
+        serverId: server.id,
+        name: "geral",
+        categoryId: null
+      };
+
+      db.channels.push(
+        generalChannel
+      );
+
       persist();
+
+      res.json(
+        serverWithChannels(
+          server,
+          req.userId
+        )
+      );
     }
-    res.json(serverWithChannels(server, req.userId));
-  });
+  );
 
-  app.get("/api/servers/:serverId/members", requireAuth, (req, res) => {
-    const server = db.servers.find((s) => s.id === req.params.serverId);
-    if (!server || !server.members.includes(req.userId)) {
-      return res.status(403).json({ error: "Você não faz parte desse servidor." });
-    }
-    const members = server.members
-      .map((id) => db.users.find((u) => u.id === id))
-      .filter(Boolean)
-      .map(publicUser);
-    res.json(members);
-  });
+  app.post(
+    "/api/servers/join",
+    requireAuth,
+    (req, res) => {
+      const { inviteCode } =
+        req.body || {};
 
-  app.post("/api/servers/:serverId/channels", requireAuth, (req, res) => {
-    const server = db.servers.find((s) => s.id === req.params.serverId);
-    if (!server || !server.members.includes(req.userId)) {
-      return res.status(403).json({ error: "Você não faz parte desse servidor." });
-    }
-    const { name, categoryId, type } = req.body || {};
-    if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome ao canal." });
+      const server =
+        db.servers.find(
+          (s) =>
+            s.inviteCode ===
+            (inviteCode || "")
+              .trim()
+        );
 
-    const channel = {
-      id: crypto.randomUUID(),
-      serverId: server.id,
-      name: name.trim(),
-      categoryId: categoryId || null,
-      type: type === "voice" ? "voice" : "text",
-    };
-    db.channels.push(channel);
-    persist();
-    res.json(channel);
-  });
+      if (!server) {
+        return res.status(404).json({
+          error:
+            "Código de convite inválido."
+        });
+      }
 
-  app.post("/api/servers/:serverId/categories", requireAuth, (req, res) => {
-    const server = db.servers.find((s) => s.id === req.params.serverId);
-    if (!server || !server.members.includes(req.userId)) {
-      return res.status(403).json({ error: "Você não faz parte desse servidor." });
-    }
-    const { name, private: isPrivate, allowedUserIds } = req.body || {};
-    if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome à categoria." });
+      if (
+        !server.members.includes(
+          req.userId
+        )
+      ) {
+        server.members.push(
+          req.userId
+        );
 
-    const category = {
-      id: crypto.randomUUID(),
-      serverId: server.id,
-      name: name.trim(),
-      private: !!isPrivate,
-      allowedUserIds: isPrivate && Array.isArray(allowedUserIds) ? allowedUserIds : [],
-    };
-    db.categories.push(category);
-    persist();
-    res.json(category);
-  });
-
-  app.post("/api/channels/:channelId/mute", requireAuth, (req, res) => {
-    const channel = db.channels.find((c) => c.id === req.params.channelId);
-    if (!channel) return res.status(404).json({ error: "Canal não encontrado." });
-    const user = db.users.find((u) => u.id === req.userId);
-    if (!user.mutedChannelIds) user.mutedChannelIds = [];
-
-    const idx = user.mutedChannelIds.indexOf(req.params.channelId);
-    let muted;
-    if (idx === -1) {
-      user.mutedChannelIds.push(req.params.channelId);
-      muted = true;
-    } else {
-      user.mutedChannelIds.splice(idx, 1);
-      muted = false;
-    }
-    persist();
-    res.json({ muted });
-  });
-
-  app.delete("/api/channels/:channelId", requireAuth, (req, res) => {
-    const channel = db.channels.find((c) => c.id === req.params.channelId);
-    if (!channel) return res.status(404).json({ error: "Canal não encontrado." });
-    const server = db.servers.find((s) => s.id === channel.serverId);
-    if (!server || server.ownerId !== req.userId) {
-      return res.status(403).json({ error: "Só o dono do servidor pode excluir canais." });
-    }
-    db.channels = db.channels.filter((c) => c.id !== req.params.channelId);
-    db.messages = db.messages.filter((m) => m.channelId !== req.params.channelId);
-    persist();
-    res.json({ ok: true });
-  });
-
-  app.delete("/api/servers/:serverId/categories/:categoryId", requireAuth, (req, res) => {
-    const server = db.servers.find((s) => s.id === req.params.serverId);
-    if (!server || server.ownerId !== req.userId) {
-      return res.status(403).json({ error: "Só o dono do servidor pode excluir categorias." });
-    }
-    db.categories = db.categories.filter((c) => c.id !== req.params.categoryId);
-    for (const channel of db.channels) {
-      if (channel.categoryId === req.params.categoryId) channel.categoryId = null;
-    }
-    persist();
-    res.json({ ok: true });
-  });
-
-  // ---------- Amigos ----------
-
-  app.get("/api/friends", requireAuth, (req, res) => {
-    const myId = req.userId;
-    const accepted = db.friendRequests.filter(
-      (r) => r.status === "accepted" && (r.fromUserId === myId || r.toUserId === myId)
-    );
-    const friends = accepted.map((r) => {
-      const otherId = r.fromUserId === myId ? r.toUserId : r.fromUserId;
-      const otherUser = db.users.find((u) => u.id === otherId);
-      return otherUser ? publicUser(otherUser) : null;
-    }).filter(Boolean);
-
-    const incoming = db.friendRequests
-      .filter((r) => r.status === "pending" && r.toUserId === myId)
-      .map((r) => {
-        const fromUser = db.users.find((u) => u.id === r.fromUserId);
-        return { requestId: r.id, user: fromUser ? publicUser(fromUser) : null };
-      })
-      .filter((r) => r.user);
-
-    const outgoing = db.friendRequests
-      .filter((r) => r.status === "pending" && r.fromUserId === myId)
-      .map((r) => {
-        const toUser = db.users.find((u) => u.id === r.toUserId);
-        return { requestId: r.id, user: toUser ? publicUser(toUser) : null };
-      })
-      .filter((r) => r.user);
-
-    res.json({ friends, incoming, outgoing });
-  });
-
-  app.post("/api/friends/request", requireAuth, (req, res) => {
-    const { username } = req.body || {};
-    const target = db.users.find(
-      (u) => u.username.toLowerCase() === (username || "").trim().toLowerCase()
-    );
-    if (!target) return res.status(404).json({ error: "Usuário não encontrado." });
-    if (target.id === req.userId) return res.status(400).json({ error: "Você não pode adicionar você mesmo." });
-
-    const existing = db.friendRequests.find(
-      (r) =>
-        ((r.fromUserId === req.userId && r.toUserId === target.id) ||
-          (r.fromUserId === target.id && r.toUserId === req.userId)) &&
-        r.status !== "declined"
-    );
-    if (existing) {
-      if (existing.status === "accepted") return res.status(400).json({ error: "Vocês já são amigos." });
-      if (existing.fromUserId === target.id) {
-        // a outra pessoa já tinha te chamado - aceita automaticamente
-        existing.status = "accepted";
         persist();
-        return res.json({ ok: true, autoAccepted: true });
       }
-      return res.status(400).json({ error: "Pedido já enviado, aguardando resposta." });
+
+      res.json(
+        serverWithChannels(
+          server,
+          req.userId
+        )
+      );
+    }
+  );
+
+  app.patch(
+    "/api/servers/:serverId",
+    requireAuth,
+    (req, res) => {
+      const server =
+        db.servers.find(
+          (s) =>
+            s.id ===
+            req.params.serverId
+        );
+
+      if (
+        !server ||
+        !server.members.includes(
+          req.userId
+        )
+      ) {
+        return res.status(403).json({
+          error:
+            "Você não faz parte desse servidor."
+        });
+      }
+
+      if (
+        server.ownerId !==
+        req.userId
+      ) {
+        return res.status(403).json({
+          error:
+            "Só o dono do servidor pode mudar o ícone."
+        });
+      }
+
+      const { iconDataUrl } =
+        req.body || {};
+
+      if (
+        typeof iconDataUrl ===
+        "string"
+      ) {
+        if (
+          !iconDataUrl.startsWith(
+            "data:image/"
+          )
+        ) {
+          return res.status(400).json({
+            error:
+              "Imagem inválida."
+          });
+        }
+
+        server.iconDataUrl =
+          iconDataUrl;
+
+        persist();
+      }
+
+      res.json(
+        serverWithChannels(
+          server,
+          req.userId
+        )
+      );
+    }
+  );
+
+  app.get(
+    "/api/servers/:serverId/members",
+    requireAuth,
+    (req, res) => {
+      const server =
+        db.servers.find(
+          (s) =>
+            s.id ===
+            req.params.serverId
+        );
+
+      if (
+        !server ||
+        !server.members.includes(
+          req.userId
+        )
+      ) {
+        return res.status(403).json({
+          error:
+            "Você não faz parte desse servidor."
+        });
+      }
+
+      const members =
+        server.members
+          .map(
+            (id) =>
+              db.users.find(
+                (u) =>
+                  u.id === id
+              )
+          )
+          .filter(Boolean)
+          .map(publicUser);
+
+      res.json(members);
+    }
+  );
+
+  app.post(
+    "/api/servers/:serverId/channels",
+    requireAuth,
+    (req, res) => {
+      const server =
+        db.servers.find(
+          (s) =>
+            s.id ===
+            req.params.serverId
+        );
+
+      if (
+        !server ||
+        !server.members.includes(
+          req.userId
+        )
+      ) {
+        return res.status(403).json({
+          error:
+            "Você não faz parte desse servidor."
+        });
+      }
+
+      const {
+        name,
+        categoryId,
+        type
+      } = req.body || {};
+
+      if (
+        !name ||
+        !name.trim()
+      ) {
+        return res.status(400).json({
+          error:
+            "Dê um nome ao canal."
+        });
+      }
+
+      const channel = {
+        id: crypto.randomUUID(),
+        serverId: server.id,
+        name: name.trim(),
+        categoryId:
+          categoryId || null,
+
+        type:
+          type === "voice"
+            ? "voice"
+            : "text"
+      };
+
+      db.channels.push(channel);
+
+      persist();
+
+      res.json(channel);
+    }
+  );
+
+  app.post(
+    "/api/servers/:serverId/categories",
+    requireAuth,
+    (req, res) => {
+      const server =
+        db.servers.find(
+          (s) =>
+            s.id ===
+            req.params.serverId
+        );
+
+      if (
+        !server ||
+        !server.members.includes(
+          req.userId
+        )
+      ) {
+        return res.status(403).json({
+          error:
+            "Você não faz parte desse servidor."
+        });
+      }
+
+      const {
+        name,
+        private: isPrivate,
+        allowedUserIds
+      } = req.body || {};
+
+      if (
+        !name ||
+        !name.trim()
+      ) {
+        return res.status(400).json({
+          error:
+            "Dê um nome à categoria."
+        });
+      }
+
+      const category = {
+        id: crypto.randomUUID(),
+        serverId: server.id,
+        name: name.trim(),
+        private: !!isPrivate,
+
+        allowedUserIds:
+          isPrivate &&
+          Array.isArray(
+            allowedUserIds
+          )
+            ? allowedUserIds
+            : []
+      };
+
+      db.categories.push(
+        category
+      );
+
+      persist();
+
+      res.json(category);
+    }
+  );
+
+  app.post(
+    "/api/channels/:channelId/mute",
+    requireAuth,
+    (req, res) => {
+      const channel =
+        db.channels.find(
+          (c) =>
+            c.id ===
+            req.params.channelId
+        );
+
+      if (!channel) {
+        return res.status(404).json({
+          error:
+            "Canal não encontrado."
+        });
+      }
+
+      const user =
+        db.users.find(
+          (u) =>
+            u.id === req.userId
+        );
+
+      if (
+        !user.mutedChannelIds
+      ) {
+        user.mutedChannelIds = [];
+      }
+
+      const idx =
+        user.mutedChannelIds.indexOf(
+          req.params.channelId
+        );
+
+      let muted;
+
+      if (idx === -1) {
+        user.mutedChannelIds.push(
+          req.params.channelId
+        );
+
+        muted = true;
+      } else {
+        user.mutedChannelIds.splice(
+          idx,
+          1
+        );
+
+        muted = false;
+      }
+
+      persist();
+
+      res.json({
+        muted
+      });
+    }
+  );
+
+  app.delete(
+    "/api/channels/:channelId",
+    requireAuth,
+    (req, res) => {
+      const channel =
+        db.channels.find(
+          (c) =>
+            c.id ===
+            req.params.channelId
+        );
+
+      if (!channel) {
+        return res.status(404).json({
+          error:
+            "Canal não encontrado."
+        });
+      }
+
+      const server =
+        db.servers.find(
+          (s) =>
+            s.id ===
+            channel.serverId
+        );
+
+      if (
+        !server ||
+        server.ownerId !==
+        req.userId
+      ) {
+        return res.status(403).json({
+          error:
+            "Só o dono do servidor pode excluir canais."
+        });
+      }
+
+      db.channels =
+        db.channels.filter(
+          (c) =>
+            c.id !==
+            req.params.channelId
+        );
+
+      db.messages =
+        db.messages.filter(
+          (m) =>
+            m.channelId !==
+            req.params.channelId
+        );
+
+      persist();
+
+      res.json({
+        ok: true
+      });
+    }
+  );
+
+  app.delete(
+    "/api/servers/:serverId/categories/:categoryId",
+    requireAuth,
+    (req, res) => {
+      const server =
+        db.servers.find(
+          (s) =>
+            s.id ===
+            req.params.serverId
+        );
+
+      if (
+        !server ||
+        server.ownerId !==
+        req.userId
+      ) {
+        return res.status(403).json({
+          error:
+            "Só o dono do servidor pode excluir categorias."
+        });
+      }
+
+      db.categories =
+        db.categories.filter(
+          (c) =>
+            c.id !==
+            req.params.categoryId
+        );
+
+      for (
+        const channel of
+        db.channels
+      ) {
+        if (
+          channel.categoryId ===
+          req.params.categoryId
+        ) {
+          channel.categoryId = null;
+        }
+      }
+
+      persist();
+
+      res.json({
+        ok: true
+      });
+    }
+  );
+
+  // ---------- AMIGOS ----------
+
+  app.get(
+    "/api/friends",
+    requireAuth,
+    (req, res) => {
+      const myId =
+        req.userId;
+
+      const accepted =
+        db.friendRequests.filter(
+          (r) =>
+            r.status === "accepted" &&
+            (
+              r.fromUserId === myId ||
+              r.toUserId === myId
+            )
+        );
+
+      const friends =
+        accepted
+          .map((r) => {
+            const otherId =
+              r.fromUserId === myId
+                ? r.toUserId
+                : r.fromUserId;
+
+            const otherUser =
+              db.users.find(
+                (u) =>
+                  u.id === otherId
+              );
+
+            return otherUser
+              ? publicUser(otherUser)
+              : null;
+          })
+          .filter(Boolean);
+
+      const incoming =
+        db.friendRequests
+          .filter(
+            (r) =>
+              r.status === "pending" &&
+              r.toUserId === myId
+          )
+          .map((r) => {
+            const fromUser =
+              db.users.find(
+                (u) =>
+                  u.id ===
+                  r.fromUserId
+              );
+
+            return {
+              requestId: r.id,
+              user: fromUser
+                ? publicUser(fromUser)
+                : null
+            };
+          })
+          .filter(
+            (r) => r.user
+          );
+
+      const outgoing =
+        db.friendRequests
+          .filter(
+            (r) =>
+              r.status === "pending" &&
+              r.fromUserId === myId
+          )
+          .map((r) => {
+            const toUser =
+              db.users.find(
+                (u) =>
+                  u.id ===
+                  r.toUserId
+              );
+
+            return {
+              requestId: r.id,
+              user: toUser
+                ? publicUser(toUser)
+                : null
+            };
+          })
+          .filter(
+            (r) => r.user
+          );
+
+      res.json({
+        friends,
+        incoming,
+        outgoing
+      });
+    }
+  );
+
+  app.post(
+    "/api/friends/request",
+    requireAuth,
+    (req, res) => {
+      const { username } =
+        req.body || {};
+
+      const target =
+        db.users.find(
+          (u) =>
+            u.username.toLowerCase() ===
+            (username || "")
+              .trim()
+              .toLowerCase()
+        );
+
+      if (!target) {
+        return res.status(404).json({
+          error:
+            "Usuário não encontrado."
+        });
+      }
+
+      if (
+        target.id ===
+        req.userId
+      ) {
+        return res.status(400).json({
+          error:
+            "Você não pode adicionar você mesmo."
+        });
+      }
+
+      const existing =
+        db.friendRequests.find(
+          (r) =>
+            (
+              (
+                r.fromUserId ===
+                  req.userId &&
+                r.toUserId ===
+                  target.id
+              ) ||
+              (
+                r.fromUserId ===
+                  target.id &&
+                r.toUserId ===
+                  req.userId
+              )
+            ) &&
+            r.status !== "declined"
+        );
+
+      if (existing) {
+        if (
+          existing.status ===
+          "accepted"
+        ) {
+          return res.status(400).json({
+            error:
+              "Vocês já são amigos."
+          });
+        }
+
+        if (
+          existing.fromUserId ===
+          target.id
+        ) {
+          existing.status =
+            "accepted";
+
+          persist();
+
+          return res.json({
+            ok: true,
+            autoAccepted: true
+          });
+        }
+
+        return res.status(400).json({
+          error:
+            "Pedido já enviado, aguardando resposta."
+        });
+      }
+
+      db.friendRequests.push({
+        id: crypto.randomUUID(),
+        fromUserId: req.userId,
+        toUserId: target.id,
+        status: "pending",
+        createdAt: Date.now()
+      });
+
+      persist();
+
+      res.json({
+        ok: true
+      });
+    }
+  );
+
+  app.post(
+    "/api/friends/:requestId/accept",
+    requireAuth,
+    (req, res) => {
+      const request =
+        db.friendRequests.find(
+          (r) =>
+            r.id ===
+            req.params.requestId
+        );
+
+      if (
+        !request ||
+        request.toUserId !==
+          req.userId ||
+        request.status !==
+          "pending"
+      ) {
+        return res.status(404).json({
+          error:
+            "Pedido não encontrado."
+        });
+      }
+
+      request.status =
+        "accepted";
+
+      persist();
+
+      res.json({
+        ok: true
+      });
+    }
+  );
+
+  app.post(
+    "/api/friends/:requestId/decline",
+    requireAuth,
+    (req, res) => {
+      const request =
+        db.friendRequests.find(
+          (r) =>
+            r.id ===
+            req.params.requestId
+        );
+
+      if (
+        !request ||
+        (
+          request.toUserId !==
+            req.userId &&
+          request.fromUserId !==
+            req.userId
+        )
+      ) {
+        return res.status(404).json({
+          error:
+            "Pedido não encontrado."
+        });
+      }
+
+      db.friendRequests =
+        db.friendRequests.filter(
+          (r) =>
+            r.id !==
+            req.params.requestId
+        );
+
+      persist();
+
+      res.json({
+        ok: true
+      });
+    }
+  );
+
+  function channelIfMember(
+    channelId,
+    userId
+  ) {
+    const channel =
+      db.channels.find(
+        (c) =>
+          c.id === channelId
+      );
+
+    if (!channel) {
+      return null;
     }
 
-    db.friendRequests.push({
-      id: crypto.randomUUID(),
-      fromUserId: req.userId,
-      toUserId: target.id,
-      status: "pending",
-      createdAt: Date.now(),
-    });
-    persist();
-    res.json({ ok: true });
-  });
+    const server =
+      db.servers.find(
+        (s) =>
+          s.id ===
+          channel.serverId
+      );
 
-  app.post("/api/friends/:requestId/accept", requireAuth, (req, res) => {
-    const request = db.friendRequests.find((r) => r.id === req.params.requestId);
-    if (!request || request.toUserId !== req.userId || request.status !== "pending") {
-      return res.status(404).json({ error: "Pedido não encontrado." });
+    if (
+      !server ||
+      !server.members.includes(
+        userId
+      )
+    ) {
+      return null;
     }
-    request.status = "accepted";
-    persist();
-    res.json({ ok: true });
-  });
 
-  app.post("/api/friends/:requestId/decline", requireAuth, (req, res) => {
-    const request = db.friendRequests.find((r) => r.id === req.params.requestId);
-    if (!request || (request.toUserId !== req.userId && request.fromUserId !== req.userId)) {
-      return res.status(404).json({ error: "Pedido não encontrado." });
-    }
-    db.friendRequests = db.friendRequests.filter((r) => r.id !== req.params.requestId);
-    persist();
-    res.json({ ok: true });
-  });
-
-
-
-  function channelIfMember(channelId, userId) {
-    const channel = db.channels.find((c) => c.id === channelId);
-    if (channel) {
-      const server = db.servers.find((s) => s.id === channel.serverId);
-      if (!server || !server.members.includes(userId)) return null;
-      return channel;
-    }
-    const dm = db.dmChannels.find((d) => d.id === channelId);
-    if (dm && dm.userIds.includes(userId)) return dm;
-    return null;
+    return channel;
   }
 
-  app.post("/api/friends/:friendUserId/dm", requireAuth, (req, res) => {
-    const friendId = req.params.friendUserId;
-    const areFriends = db.friendRequests.some(
-      (r) =>
-        r.status === "accepted" &&
-        ((r.fromUserId === req.userId && r.toUserId === friendId) ||
-          (r.fromUserId === friendId && r.toUserId === req.userId))
-    );
-    if (!areFriends) return res.status(403).json({ error: "Vocês não são amigos." });
+  // ---------- MENSAGENS ----------
 
-    let dm = db.dmChannels.find(
-      (d) => d.userIds.includes(req.userId) && d.userIds.includes(friendId)
-    );
-    if (!dm) {
-      dm = { id: crypto.randomUUID(), userIds: [req.userId, friendId] };
-      db.dmChannels.push(dm);
-      persist();
+  app.get(
+    "/api/channels/:channelId/messages",
+    requireAuth,
+    (req, res) => {
+      if (
+        !channelIfMember(
+          req.params.channelId,
+          req.userId
+        )
+      ) {
+        return res.status(403).json({
+          error:
+            "Você não tem acesso a esse canal."
+        });
+      }
+
+      const msgs =
+        db.messages
+          .filter(
+            (m) =>
+              m.channelId ===
+              req.params.channelId
+          )
+          .slice(-100);
+
+      res.json(msgs);
     }
-    const friendUser = db.users.find((u) => u.id === friendId);
-    res.json({ channelId: dm.id, friend: friendUser ? publicUser(friendUser) : null });
-  });
+  );
 
-  app.get("/api/channels/:channelId/messages", requireAuth, (req, res) => {
-    if (!channelIfMember(req.params.channelId, req.userId)) {
-      return res.status(403).json({ error: "Você não tem acesso a esse canal." });
-    }
-    const msgs = db.messages
-      .filter((m) => m.channelId === req.params.channelId)
-      .slice(-100); // só as últimas 100, pra não ficar pesado
-    res.json(msgs);
-  });
+  // ---------- WEBSOCKET / CALL ----------
 
-  // ---------- WebSocket: chat em tempo real + sinalização WebRTC ----------
-  // "callRooms" cuida da chamada de vídeo/tela - agora suporta várias
-  // pessoas ao mesmo tempo: cada pessoa se conecta diretamente com
-  // todas as outras (por isso funciona bem até uns 4-5 participantes).
-  // "chatSubscribers" cuida do chat de texto (qualquer número de gente).
-  // O vídeo em si NUNCA passa por este servidor - só ajuda a conectar.
+  const server =
+    http.createServer(app);
 
-  const server = http.createServer(app);
-  const wss = new WebSocketServer({ server });
+  const wss =
+    new WebSocketServer({
+      server
+    });
 
-  const callRooms = new Map(); // channelId -> Map<peerId, ws>
-  const chatSubscribers = new Map(); // channelId -> Set de conexoes
+  // channelId -> Map<peerId, websocket>
+  const callRooms =
+    new Map();
+
+  // channelId -> Set<websocket>
+  const chatSubscribers =
+    new Map();
 
   function send(ws, msg) {
-    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+    if (
+      ws.readyState === ws.OPEN
+    ) {
+      ws.send(
+        JSON.stringify(msg)
+      );
+    }
   }
 
-  wss.on("connection", (ws, req) => {
-    const url = new URL(req.url, "http://localhost");
-    const token = url.searchParams.get("token");
-    const userId = sessions.get(token);
-    if (!userId) {
-      ws.close();
+  // Envia a lista atual de pessoas da call
+  // para todo mundo que está no canal.
+  function broadcastVoicePresence(
+    channelId
+  ) {
+    const room =
+      callRooms.get(channelId);
+
+    if (!room) {
       return;
     }
-    const author = db.users.find((u) => u.id === userId);
-    ws.userId = userId;
-    ws.username = author ? author.username : "?";
-    ws.avatarDataUrl = author ? author.avatarDataUrl || author.googlePicture || null : null;
-    ws.peerId = crypto.randomUUID();
-    ws.channelId = null;
 
-    ws.on("message", (raw) => {
-      let msg;
-      try {
-        msg = JSON.parse(raw);
-      } catch {
+    const users =
+      [...room.values()].map(
+        (peer) => ({
+          id: peer.peerId,
+          userId: peer.userId,
+          username: peer.username,
+          avatarDataUrl:
+            peer.avatarDataUrl ||
+            null
+        })
+      );
+
+    for (
+      const peer of
+      room.values()
+    ) {
+      send(peer, {
+        type: "voice-presence",
+        channelId,
+        users
+      });
+    }
+  }
+
+  wss.on(
+    "connection",
+    (ws, req) => {
+      const url =
+        new URL(
+          req.url,
+          "http://localhost"
+        );
+
+      const token =
+        url.searchParams.get(
+          "token"
+        );
+
+      const userId =
+        sessions.get(token);
+
+      if (!userId) {
+        ws.close();
         return;
       }
 
-      if (msg.type === "enter-channel") {
-        const validChannel = channelIfMember(msg.channelId, ws.userId);
-        if (!validChannel) return send(ws, { type: "error", message: "Canal não encontrado." });
+      const author =
+        db.users.find(
+          (u) =>
+            u.id === userId
+        );
 
-        ws.channelId = msg.channelId;
+      ws.userId = userId;
 
-        // inscreve pro chat (sem limite de pessoas)
-        let subs = chatSubscribers.get(msg.channelId);
-        if (!subs) {
-          subs = new Set();
-          chatSubscribers.set(msg.channelId, subs);
-        }
-        subs.add(ws);
+      ws.username =
+        author
+          ? author.username
+          : "?";
 
-        // entra na sala de chamada (sem limite de pessoas agora)
-        let room = callRooms.get(msg.channelId);
-        if (!room) {
-          room = new Map();
-          callRooms.set(msg.channelId, room);
-        }
+      ws.avatarDataUrl =
+        author
+          ? (
+              author.avatarDataUrl ||
+              author.googlePicture ||
+              null
+            )
+          : null;
 
-        const existingPeers = [...room.values()].map((peer) => ({
-          id: peer.peerId,
-          username: peer.username,
-          avatarDataUrl: peer.avatarDataUrl,
-        }));
+      ws.peerId =
+        crypto.randomUUID();
 
-        room.set(ws.peerId, ws);
+      ws.channelId = null;
 
-        send(ws, {
-          type: "entered",
-          channelId: msg.channelId,
-          selfId: ws.peerId,
-          peers: existingPeers,
-        });
+      ws.on(
+        "message",
+        (raw) => {
+          let msg;
 
-        for (const peer of room.values()) {
-          if (peer !== ws) {
-            send(peer, {
-              type: "peer-joined",
-              id: ws.peerId,
-              username: ws.username,
-              avatarDataUrl: ws.avatarDataUrl,
+          try {
+            msg =
+              JSON.parse(raw);
+          } catch {
+            return;
+          }
+
+          // ---------- ENTRAR NO CANAL ----------
+
+          if (
+            msg.type ===
+            "enter-channel"
+          ) {
+            const channel =
+              db.channels.find(
+                (c) =>
+                  c.id ===
+                  msg.channelId
+              );
+
+            if (!channel) {
+              return send(ws, {
+                type: "error",
+                message:
+                  "Canal não encontrado."
+              });
+            }
+
+            // Se já estava em outro canal,
+            // remove do antigo primeiro.
+            if (
+              ws.channelId &&
+              ws.channelId !==
+                msg.channelId
+            ) {
+              const oldRoom =
+                callRooms.get(
+                  ws.channelId
+                );
+
+              if (oldRoom) {
+                oldRoom.delete(
+                  ws.peerId
+                );
+
+                broadcastVoicePresence(
+                  ws.channelId
+                );
+
+                if (
+                  oldRoom.size === 0
+                ) {
+                  callRooms.delete(
+                    ws.channelId
+                  );
+                }
+              }
+
+              const oldSubs =
+                chatSubscribers.get(
+                  ws.channelId
+                );
+
+              if (oldSubs) {
+                oldSubs.delete(ws);
+
+                if (
+                  oldSubs.size === 0
+                ) {
+                  chatSubscribers.delete(
+                    ws.channelId
+                  );
+                }
+              }
+            }
+
+            ws.channelId =
+              msg.channelId;
+
+            // ---------- CHAT ----------
+
+            let subs =
+              chatSubscribers.get(
+                msg.channelId
+              );
+
+            if (!subs) {
+              subs = new Set();
+
+              chatSubscribers.set(
+                msg.channelId,
+                subs
+              );
+            }
+
+            subs.add(ws);
+
+            // ---------- CALL ----------
+
+            let room =
+              callRooms.get(
+                msg.channelId
+              );
+
+            if (!room) {
+              room = new Map();
+
+              callRooms.set(
+                msg.channelId,
+                room
+              );
+            }
+
+            // Pessoas que já estavam na call
+            const existingPeers =
+              [...room.values()].map(
+                (peer) => ({
+                  id: peer.peerId,
+                  userId:
+                    peer.userId,
+
+                  username:
+                    peer.username,
+
+                  avatarDataUrl:
+                    peer.avatarDataUrl ||
+                    null
+                })
+              );
+
+            // Adiciona a pessoa atual
+            room.set(
+              ws.peerId,
+              ws
+            );
+
+            // Resposta para quem entrou
+            send(ws, {
+              type: "entered",
+
+              channelId:
+                msg.channelId,
+
+              selfId:
+                ws.peerId,
+
+              peers:
+                existingPeers
             });
+
+            // Avisa os outros que alguém entrou
+            for (
+              const peer of
+              room.values()
+            ) {
+              if (peer !== ws) {
+                send(peer, {
+                  type:
+                    "peer-joined",
+
+                  id:
+                    ws.peerId,
+
+                  userId:
+                    ws.userId,
+
+                  username:
+                    ws.username,
+
+                  avatarDataUrl:
+                    ws.avatarDataUrl ||
+                    null
+                });
+              }
+            }
+
+            // ESTA É A PARTE NOVA:
+            // manda a lista completa da call
+            // para TODOS.
+            broadcastVoicePresence(
+              msg.channelId
+            );
+
+            return;
+          }
+
+          // ---------- SAIR DO CANAL ----------
+
+          if (
+            msg.type ===
+            "leave-channel"
+          ) {
+            const channelId =
+              ws.channelId;
+
+            if (!channelId) {
+              return;
+            }
+
+            const room =
+              callRooms.get(
+                channelId
+              );
+
+            if (room) {
+              room.delete(
+                ws.peerId
+              );
+
+              for (
+                const peer of
+                room.values()
+              ) {
+                send(peer, {
+                  type:
+                    "peer-left",
+
+                  id:
+                    ws.peerId
+                });
+              }
+
+              broadcastVoicePresence(
+                channelId
+              );
+
+              if (
+                room.size === 0
+              ) {
+                callRooms.delete(
+                  channelId
+                );
+              }
+            }
+
+            const subs =
+              chatSubscribers.get(
+                channelId
+              );
+
+            if (subs) {
+              subs.delete(ws);
+
+              if (
+                subs.size === 0
+              ) {
+                chatSubscribers.delete(
+                  channelId
+                );
+              }
+            }
+
+            ws.channelId = null;
+
+            return;
+          }
+
+          // ---------- CHAT ----------
+
+          if (
+            msg.type ===
+            "chat-message"
+          ) {
+            if (
+              !channelIfMember(
+                msg.channelId,
+                ws.userId
+              )
+            ) {
+              return;
+            }
+
+            const text =
+              (msg.text || "")
+                .trim()
+                .slice(0, 2000);
+
+            let imageDataUrl =
+              null;
+
+            if (
+              typeof msg.imageDataUrl ===
+                "string" &&
+              msg.imageDataUrl.startsWith(
+                "data:image/"
+              )
+            ) {
+              imageDataUrl =
+                msg.imageDataUrl;
+            }
+
+            if (
+              !text &&
+              !imageDataUrl
+            ) {
+              return;
+            }
+
+            const author =
+              db.users.find(
+                (u) =>
+                  u.id ===
+                  ws.userId
+              );
+
+            const message = {
+              id:
+                crypto.randomUUID(),
+
+              channelId:
+                msg.channelId,
+
+              userId:
+                ws.userId,
+
+              username:
+                author
+                  ? author.username
+                  : "?",
+
+              avatarDataUrl:
+                author
+                  ? (
+                      author.avatarDataUrl ||
+                      author.googlePicture ||
+                      null
+                    )
+                  : null,
+
+              text,
+
+              imageDataUrl,
+
+              createdAt:
+                Date.now()
+            };
+
+            db.messages.push(
+              message
+            );
+
+            persist();
+
+            const subs =
+              chatSubscribers.get(
+                msg.channelId
+              );
+
+            if (subs) {
+              for (
+                const peer of subs
+              ) {
+                send(peer, {
+                  type:
+                    "chat-message",
+
+                  message
+                });
+              }
+            }
+
+            return;
+          }
+
+          // ---------- WEBRTC ----------
+
+          if (
+            [
+              "offer",
+              "answer",
+              "ice-candidate"
+            ].includes(
+              msg.type
+            )
+          ) {
+            const room =
+              callRooms.get(
+                ws.channelId
+              );
+
+            if (!room) {
+              return;
+            }
+
+            const target =
+              room.get(
+                msg.target
+              );
+
+            if (target) {
+              send(target, {
+                ...msg,
+
+                from:
+                  ws.peerId
+              });
+            }
+
+            return;
+          }
+
+          // ---------- COMPARTILHAMENTO ENCERRADO ----------
+
+          if (
+            msg.type ===
+            "screen-share-ended"
+          ) {
+            const room =
+              callRooms.get(
+                ws.channelId
+              );
+
+            if (!room) {
+              return;
+            }
+
+            for (
+              const peer of
+              room.values()
+            ) {
+              if (peer !== ws) {
+                send(peer, {
+                  type:
+                    "screen-share-ended",
+
+                  from:
+                    ws.peerId
+                });
+              }
+            }
+
+            return;
           }
         }
-        return;
-      }
+      );
 
-      if (msg.type === "chat-message") {
-        if (!channelIfMember(msg.channelId, ws.userId)) return;
-        const text = (msg.text || "").trim().slice(0, 2000);
-        let imageDataUrl = null;
-        if (typeof msg.imageDataUrl === "string" && msg.imageDataUrl.startsWith("data:image/")) {
-          imageDataUrl = msg.imageDataUrl;
+      // ---------- DESCONECTOU ----------
+
+      ws.on(
+        "close",
+        () => {
+          const channelId =
+            ws.channelId;
+
+          const room =
+            callRooms.get(
+              channelId
+            );
+
+          if (room) {
+            room.delete(
+              ws.peerId
+            );
+
+            for (
+              const peer of
+              room.values()
+            ) {
+              send(peer, {
+                type:
+                  "peer-left",
+
+                id:
+                  ws.peerId
+              });
+            }
+
+            // Atualiza a lista de pessoas
+            broadcastVoicePresence(
+              channelId
+            );
+
+            if (
+              room.size === 0
+            ) {
+              callRooms.delete(
+                channelId
+              );
+            }
+          }
+
+          const subs =
+            chatSubscribers.get(
+              channelId
+            );
+
+          if (subs) {
+            subs.delete(ws);
+
+            if (
+              subs.size === 0
+            ) {
+              chatSubscribers.delete(
+                channelId
+              );
+            }
+          }
         }
-        if (!text && !imageDataUrl) return;
+      );
+    }
+  );
 
-        const author = db.users.find((u) => u.id === ws.userId);
-        const message = {
-          id: crypto.randomUUID(),
-          channelId: msg.channelId,
-          userId: ws.userId,
-          username: author ? author.username : "?",
-          avatarDataUrl: author ? author.avatarDataUrl || null : null,
-          text,
-          imageDataUrl,
-          createdAt: Date.now(),
-        };
-        db.messages.push(message);
-        persist();
+  return new Promise(
+    (resolve) => {
+      server.listen(
+        port,
+        () => {
+          console.log(
+            `Servidor rodando em http://localhost:${port}`
+          );
 
-        const subs = chatSubscribers.get(msg.channelId);
-        if (subs) {
-          for (const peer of subs) send(peer, { type: "chat-message", message });
+          resolve(server);
         }
-        return;
-      }
-
-      if (["offer", "answer", "ice-candidate"].includes(msg.type)) {
-        const room = callRooms.get(ws.channelId);
-        if (!room) return;
-        const target = room.get(msg.target);
-        if (target) send(target, { ...msg, from: ws.peerId });
-      }
-
-      if (msg.type === "screen-share-ended") {
-        const room = callRooms.get(ws.channelId);
-        if (!room) return;
-        for (const peer of room.values()) {
-          if (peer !== ws) send(peer, { type: "screen-share-ended", from: ws.peerId });
-        }
-      }
-    });
-
-    ws.on("close", () => {
-      const room = callRooms.get(ws.channelId);
-      if (room) {
-        room.delete(ws.peerId);
-        for (const peer of room.values()) send(peer, { type: "peer-left", id: ws.peerId });
-        if (room.size === 0) callRooms.delete(ws.channelId);
-      }
-      const subs = chatSubscribers.get(ws.channelId);
-      if (subs) {
-        subs.delete(ws);
-        if (subs.size === 0) chatSubscribers.delete(ws.channelId);
-      }
-    });
-  });
-
-  return new Promise((resolve) => {
-    server.listen(port, () => {
-      console.log(`Servidor rodando em http://localhost:${port}`);
-      resolve(server);
-    });
-  });
+      );
+    }
+  );
 }
 
-module.exports = { startServer };
+module.exports = {
+  startServer
+};
 
-if (require.main === module) {
-  startServer(process.env.PORT || 3000);
+if (
+  require.main === module
+) {
+  startServer(
+    process.env.PORT || 3000
+  );
 }
