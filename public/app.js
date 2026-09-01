@@ -12,6 +12,7 @@ let selfPeerId = null;
 let knownPeers = new Map(); // peerId -> username (quem está no canal agora)
 let pcsOut = new Map(); // peerId -> RTCPeerConnection (conexões que eu abri pra compartilhar MINHA tela)
 let pcsIn = new Map(); // peerId -> RTCPeerConnection (conexões que recebem a tela de OUTRA pessoa)
+const pendingIceCandidates = new Map(); // peerId -> lista de candidatos que chegaram cedo demais
 let localScreenStream = null;
 let localMicStream = null;
 let micMuted = false;
@@ -493,6 +494,7 @@ function connectToChannel(channelId) {
           pcsIn.set(msg.from, pcIn);
         }
         await pcIn.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        await flushPendingIceCandidates(msg.from, pcIn);
         const answer = await pcIn.createAnswer();
         await pcIn.setLocalDescription(answer);
         ws.send(JSON.stringify({ type: "answer", target: msg.from, sdp: answer }));
@@ -501,7 +503,10 @@ function connectToChannel(channelId) {
 
       case "answer": {
         const pcOut = pcsOut.get(msg.from);
-        if (pcOut) await pcOut.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        if (pcOut) {
+          await pcOut.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+          await flushPendingIceCandidates(msg.from, pcOut);
+        }
         break;
       }
 
@@ -509,10 +514,16 @@ function connectToChannel(channelId) {
         if (!msg.candidate) break;
         const pc = pcsOut.get(msg.from) || pcsIn.get(msg.from);
         if (pc) {
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-          } catch (err) {
-            console.error(err);
+          if (pc.remoteDescription) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            } catch (err) {
+              console.error(err);
+            }
+          } else {
+            // ainda não temos a descrição remota - guarda pra aplicar depois
+            if (!pendingIceCandidates.has(msg.from)) pendingIceCandidates.set(msg.from, []);
+            pendingIceCandidates.get(msg.from).push(msg.candidate);
           }
         }
         break;
@@ -564,6 +575,19 @@ function renderParticipantsBar() {
     circle.dataset.key = peerId;
     circle.innerHTML = `<div class="avatar-lg">${avatarHtml(peer.username, peer.avatarDataUrl)}</div><div class="participant-name">${escapeHtml(peer.username)}</div>`;
     participantsCircleRow.appendChild(circle);
+  }
+}
+
+async function flushPendingIceCandidates(peerId, pc) {
+  const queued = pendingIceCandidates.get(peerId);
+  if (!queued) return;
+  pendingIceCandidates.delete(peerId);
+  for (const candidate of queued) {
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (err) {
+      console.error(err);
+    }
   }
 }
 
@@ -740,12 +764,40 @@ function speakingLoop() {
 }
 
 // ---------- Microfone ----------
+let noiseSuppressionProcessor = null;
+
 async function ensureMicJoined() {
   if (localMicStream) return;
   try {
-    localMicStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    const rawStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: { ideal: 48000 },
+        sampleSize: { ideal: 480 },
+        channelCount: { exact: 1 },
+      },
     });
+
+    // Tenta melhorar ainda mais com redução de ruído por IA (só funciona
+    // em navegadores baseados em Chromium - Chrome, Edge, Brave). Se não
+    // der, usa o áudio normal mesmo (que já tem redução de ruído básica).
+    if (window.Shiguredo) {
+      try {
+        const assetsPath = "https://cdn.jsdelivr.net/npm/@shiguredo/noise-suppression@latest/dist";
+        noiseSuppressionProcessor = new Shiguredo.NoiseSuppressionProcessor(assetsPath);
+        const rawTrack = rawStream.getAudioTracks()[0];
+        const processedTrack = await noiseSuppressionProcessor.startProcessing(rawTrack);
+        localMicStream = new MediaStream([processedTrack]);
+      } catch (err) {
+        console.error("Redução de ruído por IA indisponível, usando áudio normal:", err);
+        localMicStream = rawStream;
+      }
+    } else {
+      localMicStream = rawStream;
+    }
+
     setupSpeakingDetector(localMicStream, "me");
     for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
   } catch (err) {
@@ -813,6 +865,10 @@ leaveChannelBtn.addEventListener("click", () => {
 function leaveCall() {
   if (localScreenStream) for (const track of localScreenStream.getTracks()) track.stop();
   if (localMicStream) for (const track of localMicStream.getTracks()) track.stop();
+  if (noiseSuppressionProcessor) {
+    noiseSuppressionProcessor.stopProcessing();
+    noiseSuppressionProcessor = null;
+  }
   for (const pc of pcsOut.values()) pc.close();
   for (const pc of pcsIn.values()) pc.close();
   document.querySelectorAll('audio[id^="audio-"]').forEach((el) => el.remove());
