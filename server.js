@@ -412,11 +412,37 @@ async function startServer(port = 3000) {
 
   function channelIfMember(channelId, userId) {
     const channel = db.channels.find((c) => c.id === channelId);
-    if (!channel) return null;
-    const server = db.servers.find((s) => s.id === channel.serverId);
-    if (!server || !server.members.includes(userId)) return null;
-    return channel;
+    if (channel) {
+      const server = db.servers.find((s) => s.id === channel.serverId);
+      if (!server || !server.members.includes(userId)) return null;
+      return channel;
+    }
+    const dm = db.dmChannels.find((d) => d.id === channelId);
+    if (dm && dm.userIds.includes(userId)) return dm;
+    return null;
   }
+
+  app.post("/api/friends/:friendUserId/dm", requireAuth, (req, res) => {
+    const friendId = req.params.friendUserId;
+    const areFriends = db.friendRequests.some(
+      (r) =>
+        r.status === "accepted" &&
+        ((r.fromUserId === req.userId && r.toUserId === friendId) ||
+          (r.fromUserId === friendId && r.toUserId === req.userId))
+    );
+    if (!areFriends) return res.status(403).json({ error: "Vocês não são amigos." });
+
+    let dm = db.dmChannels.find(
+      (d) => d.userIds.includes(req.userId) && d.userIds.includes(friendId)
+    );
+    if (!dm) {
+      dm = { id: crypto.randomUUID(), userIds: [req.userId, friendId] };
+      db.dmChannels.push(dm);
+      persist();
+    }
+    const friendUser = db.users.find((u) => u.id === friendId);
+    res.json({ channelId: dm.id, friend: friendUser ? publicUser(friendUser) : null });
+  });
 
   app.get("/api/channels/:channelId/messages", requireAuth, (req, res) => {
     if (!channelIfMember(req.params.channelId, req.userId)) {
@@ -469,8 +495,8 @@ async function startServer(port = 3000) {
       }
 
       if (msg.type === "enter-channel") {
-        const channel = db.channels.find((c) => c.id === msg.channelId);
-        if (!channel) return send(ws, { type: "error", message: "Canal não encontrado." });
+        const validChannel = channelIfMember(msg.channelId, ws.userId);
+        if (!validChannel) return send(ws, { type: "error", message: "Canal não encontrado." });
 
         ws.channelId = msg.channelId;
 
@@ -520,7 +546,11 @@ async function startServer(port = 3000) {
       if (msg.type === "chat-message") {
         if (!channelIfMember(msg.channelId, ws.userId)) return;
         const text = (msg.text || "").trim().slice(0, 2000);
-        if (!text) return;
+        let imageDataUrl = null;
+        if (typeof msg.imageDataUrl === "string" && msg.imageDataUrl.startsWith("data:image/")) {
+          imageDataUrl = msg.imageDataUrl;
+        }
+        if (!text && !imageDataUrl) return;
 
         const author = db.users.find((u) => u.id === ws.userId);
         const message = {
@@ -530,6 +560,7 @@ async function startServer(port = 3000) {
           username: author ? author.username : "?",
           avatarDataUrl: author ? author.avatarDataUrl || null : null,
           text,
+          imageDataUrl,
           createdAt: Date.now(),
         };
         db.messages.push(message);
