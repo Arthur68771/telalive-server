@@ -924,10 +924,13 @@ channelModalConfirm.addEventListener("click", async () => {
 });
 
 // ---------- Modal: editar perfil ----------
+const profileUsernameInput = document.getElementById("profile-username-input");
+
 profileBtn.addEventListener("click", () => {
   pendingAvatarDataUrl = null;
   profileModalStatus.textContent = "";
   profileAvatarPreview.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
+  profileUsernameInput.value = currentUser?.username || "";
   profileModal.classList.remove("hidden");
 });
 
@@ -958,16 +961,18 @@ profileLogoutBtn.addEventListener("click", () => {
 });
 
 profileModalConfirm.addEventListener("click", async () => {
-  if (!pendingAvatarDataUrl) {
+  const newUsername = profileUsernameInput.value.trim();
+  const body = {};
+  if (pendingAvatarDataUrl) body.avatarDataUrl = pendingAvatarDataUrl;
+  if (newUsername && newUsername !== currentUser?.username) body.username = newUsername;
+
+  if (Object.keys(body).length === 0) {
     profileModal.classList.add("hidden");
     return;
   }
   profileModalStatus.textContent = "";
   try {
-    currentUser = await api("/api/me", {
-      method: "PATCH",
-      body: JSON.stringify({ avatarDataUrl: pendingAvatarDataUrl }),
-    });
+    currentUser = await api("/api/me", { method: "PATCH", body: JSON.stringify(body) });
     updateProfileBtn();
     profileModal.classList.add("hidden");
   } catch (err) {
