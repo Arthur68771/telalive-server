@@ -48,7 +48,13 @@ const statusText = document.getElementById("status-text");
 const shareBtn = document.getElementById("share-btn");
 const stopShareBtn = document.getElementById("stop-share-btn");
 const micBtn = document.getElementById("mic-btn");
+const deafenBtn = document.getElementById("deafen-btn");
 const leaveChannelBtn = document.getElementById("leave-channel-btn");
+let deafened = false;
+
+let audioContext = null;
+const audioAnalysers = new Map(); // "me" ou peerId -> AnalyserNode
+let speakingLoopRunning = false;
 const chatMessagesEl = document.getElementById("chat-messages");
 const chatEmptyEl = document.getElementById("chat-empty");
 const chatInput = document.getElementById("chat-input");
@@ -127,8 +133,6 @@ let itemContextTarget = null; // { type: "channel" | "category", id }
 
 let contextMenuServerId = null;
 let hideMutedChannels = localStorage.getItem("telalive-hide-muted") === "1";
-let voicePresence = new Map(); // channelId -> [{id, username, avatarDataUrl}]
-let voicePresenceTimer = null;
 
 let pendingAvatarDataUrl = null;
 let pendingServerIconDataUrl = null;
@@ -275,7 +279,6 @@ function selectServer(serverId) {
   leaveCall();
   renderServerRail();
   renderChannelList();
-  startVoicePresencePolling();
   showEmptyState();
 }
 
@@ -326,72 +329,26 @@ function renderChannelList() {
 
 function renderChannelItem(channel) {
   const item = document.createElement("div");
-  item.className = "channel-wrap";
-
-  const row = document.createElement("div");
-  row.className = "channel-item" + (channel.id === activeChannelId ? " active" : "") + (channel.muted ? " muted" : "");
-  row.innerHTML = `
-    <span class="hash">${channel.type === "voice" ? "🔊" : "#"}</span><span class="channel-item-name">${escapeHtml(channel.name)}</span>
+  item.className = "channel-item" + (channel.id === activeChannelId ? " active" : "") + (channel.muted ? " muted" : "");
+  item.innerHTML = `
+    <span class="hash">${channel.type === "voice" ? "🔊" : "#"}</span><span>${escapeHtml(channel.name)}</span>
     <button class="mute-toggle" title="${channel.muted ? "Reativar" : "Silenciar"}">${channel.muted ? "🔇" : "🔊"}</button>
   `;
-  row.addEventListener("click", (e) => {
+  item.addEventListener("click", (e) => {
     if (e.target.closest(".mute-toggle")) return;
     selectChannel(channel.id, channel.name);
   });
-  row.addEventListener("contextmenu", (e) => {
+  item.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     openItemContextMenu("channel", channel.id, e.clientX, e.clientY);
   });
-  row.querySelector(".mute-toggle").addEventListener("click", async (e) => {
+  item.querySelector(".mute-toggle").addEventListener("click", async (e) => {
     e.stopPropagation();
     await api(`/api/channels/${channel.id}/mute`, { method: "POST" });
     await loadServers();
     renderChannelList();
   });
-  item.appendChild(row);
-
-  // Igual ao Discord: participantes de canais de voz ficam logo abaixo do canal.
-  if (channel.type === "voice") {
-    const people = voicePresence.get(channel.id) || [];
-    if (people.length) {
-      const presence = document.createElement("div");
-      presence.className = "channel-presence";
-      for (const person of people) {
-        const p = document.createElement("div");
-        p.className = "channel-presence-user";
-        p.title = person.username;
-        p.innerHTML = `<span class="channel-presence-avatar">${avatarHtml(person.username, person.avatarDataUrl)}</span><span>${escapeHtml(person.username)}</span>`;
-        presence.appendChild(p);
-      }
-      item.appendChild(presence);
-    }
-  }
-
   return item;
-}
-
-async function refreshVoicePresence() {
-  if (!activeServerId || !token) return;
-  try {
-    const data = await api(`/api/servers/${activeServerId}/voice-presence`);
-    voicePresence = new Map((data.channels || []).map((entry) => [entry.channelId, entry.users || []]));
-    renderChannelList();
-  } catch (err) {
-    console.warn("Não foi possível atualizar quem está em chamada:", err.message);
-  }
-}
-
-function startVoicePresencePolling() {
-  if (voicePresenceTimer) clearInterval(voicePresenceTimer);
-  refreshVoicePresence();
-  voicePresenceTimer = setInterval(refreshVoicePresence, 2000);
-}
-
-function stopVoicePresencePolling() {
-  if (voicePresenceTimer) {
-    clearInterval(voicePresenceTimer);
-    voicePresenceTimer = null;
-  }
 }
 
 function escapeHtml(str) {
@@ -561,17 +518,18 @@ function connectToChannel(channelId) {
         break;
       }
 
-      case "screen-stopped": {
-        removeVideoTile(msg.from);
-        break;
-      }
-
       case "peer-left": {
         knownPeers.delete(msg.id);
         closePeerConnections(msg.id);
         removeVideoTile(msg.id);
+        cleanupPeerAudio(msg.id);
         updateWaitingText();
         renderParticipantsBar();
+        break;
+      }
+
+      case "screen-share-ended": {
+        removeVideoTile(msg.from);
         break;
       }
 
@@ -596,12 +554,14 @@ function renderParticipantsBar() {
 
   const meCircle = document.createElement("div");
   meCircle.className = "participant-circle";
+  meCircle.dataset.key = "me";
   meCircle.innerHTML = `<div class="avatar-lg">${avatarHtml(currentUser?.username, currentUser?.avatarDataUrl)}</div><div class="participant-name">Você</div>`;
   participantsCircleRow.appendChild(meCircle);
 
-  for (const peer of knownPeers.values()) {
+  for (const [peerId, peer] of knownPeers) {
     const circle = document.createElement("div");
     circle.className = "participant-circle";
+    circle.dataset.key = peerId;
     circle.innerHTML = `<div class="avatar-lg">${avatarHtml(peer.username, peer.avatarDataUrl)}</div><div class="participant-name">${escapeHtml(peer.username)}</div>`;
     participantsCircleRow.appendChild(circle);
   }
@@ -618,7 +578,16 @@ function createPeerConnection(peerId, direction) {
 
   if (direction === "in") {
     conn.ontrack = (event) => {
-      showVideoTile(peerId, knownPeers.get(peerId)?.username || "Alguém", event.streams[0]);
+      const stream = event.streams[0];
+      if (event.track.kind === "video") {
+        showVideoTile(peerId, knownPeers.get(peerId)?.username || "Alguém", stream);
+      } else if (event.track.kind === "audio" && stream.getVideoTracks().length === 0) {
+        // áudio "puro" (microfone) - toca escondido e liga o detector de fala
+        playRemoteAudio(peerId, stream);
+        setupSpeakingDetector(stream, peerId);
+      }
+      // se o áudio vier junto com vídeo (ex: compartilhamento com som do
+      // sistema), o próprio elemento de vídeo já toca ele - não duplica.
     };
   }
 
@@ -631,6 +600,28 @@ function createPeerConnection(peerId, direction) {
   return conn;
 }
 
+function playRemoteAudio(peerId, stream) {
+  let audioEl = document.getElementById(`audio-${peerId}`);
+  if (!audioEl) {
+    audioEl = document.createElement("audio");
+    audioEl.id = `audio-${peerId}`;
+    audioEl.autoplay = true;
+    audioEl.style.display = "none";
+    document.body.appendChild(audioEl);
+  }
+  audioEl.srcObject = stream;
+  audioEl.muted = deafened;
+}
+
+deafenBtn.addEventListener("click", () => {
+  deafened = !deafened;
+  document.querySelectorAll('audio[id^="audio-"]').forEach((el) => (el.muted = deafened));
+  document.querySelectorAll(".video-tile video").forEach((el) => (el.muted = deafened));
+  deafenBtn.textContent = deafened ? "🔇" : "🎧";
+  deafenBtn.classList.toggle("off", deafened);
+  deafenBtn.title = deafened ? "Ativar áudio recebido" : "Mutar áudio recebido";
+});
+
 function showVideoTile(peerId, username, stream) {
   waitingState.classList.add("hidden");
   let tile = document.getElementById(`tile-${peerId}`);
@@ -641,13 +632,21 @@ function showVideoTile(peerId, username, stream) {
     tile.innerHTML = `<video autoplay playsinline></video><span class="video-tile-label">${escapeHtml(username)}</span>`;
     videoGrid.appendChild(tile);
   }
-  tile.querySelector("video").srcObject = stream;
+  const videoEl = tile.querySelector("video");
+  videoEl.srcObject = stream;
+  videoEl.muted = deafened;
 }
 
 function removeVideoTile(peerId) {
   const tile = document.getElementById(`tile-${peerId}`);
   if (tile) tile.remove();
   if (videoGrid.children.length === 0) waitingState.classList.remove("hidden");
+}
+
+function cleanupPeerAudio(peerId) {
+  const audioEl = document.getElementById(`audio-${peerId}`);
+  if (audioEl) audioEl.remove();
+  removeSpeakingDetector(peerId);
 }
 
 function closePeerConnections(peerId) {
@@ -700,18 +699,54 @@ async function syncOutgoingTracksToPeer(peerId) {
   }
 }
 
+// ---------- Detectar quem está falando (anel verde no avatar/vídeo) ----------
+function setupSpeakingDetector(stream, key) {
+  if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  try {
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.6;
+    source.connect(analyser);
+    audioAnalysers.set(key, analyser);
+    if (!speakingLoopRunning) {
+      speakingLoopRunning = true;
+      requestAnimationFrame(speakingLoop);
+    }
+  } catch (err) {
+    console.error("Não foi possível analisar o áudio:", err);
+  }
+}
+
+function removeSpeakingDetector(key) {
+  audioAnalysers.delete(key);
+}
+
+function speakingLoop() {
+  const data = new Uint8Array(256);
+  for (const [key, analyser] of audioAnalysers) {
+    analyser.getByteFrequencyData(data);
+    let sum = 0;
+    for (const v of data) sum += v;
+    const isSpeaking = sum / data.length > 12;
+
+    const circle = document.querySelector(`.participant-circle[data-key="${key}"] .avatar-lg`);
+    if (circle) circle.classList.toggle("speaking", isSpeaking);
+
+    const tile = document.getElementById(`tile-${key}`);
+    if (tile) tile.classList.toggle("speaking", isSpeaking);
+  }
+  requestAnimationFrame(speakingLoop);
+}
+
 // ---------- Microfone ----------
 async function ensureMicJoined() {
   if (localMicStream) return;
   try {
     localMicStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1
-      }
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
+    setupSpeakingDetector(localMicStream, "me");
     for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
   } catch (err) {
     console.error("Não foi possível acessar o microfone:", err);
@@ -750,50 +785,21 @@ shareBtn.addEventListener("click", async () => {
 
 stopShareBtn.addEventListener("click", stopSharing);
 
-async function stopSharing() {
-  if (!localScreenStream) return;
-
-  const stream = localScreenStream;
+function stopSharing() {
+  if (localScreenStream) {
+    for (const track of localScreenStream.getTracks()) {
+      track.stop();
+      for (const pc of pcsOut.values()) {
+        const sender = pc.getSenders().find((s) => s.track === track);
+        if (sender) pc.removeTrack(sender);
+      }
+    }
+  }
   localScreenStream = null;
-  const trackIds = new Set(stream.getVideoTracks().map((track) => track.id));
-
-  // Avisa cada participante imediatamente para remover a tela.
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    for (const peerId of knownPeers.keys()) {
-      ws.send(JSON.stringify({ type: "screen-stopped", target: peerId }));
-    }
-  }
-
-  // Remove a faixa de vídeo da conexão sem derrubar o áudio.
-  for (const [peerId, pc] of pcsOut.entries()) {
-    let changed = false;
-    for (const sender of pc.getSenders()) {
-      if (sender.track && trackIds.has(sender.track.id)) {
-        pc.removeTrack(sender);
-        changed = true;
-      }
-    }
-    if (changed && ws && ws.readyState === WebSocket.OPEN) {
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
-      } catch (err) {
-        console.warn("Não foi possível atualizar a chamada após parar a tela:", err);
-      }
-    }
-  }
-
-  for (const track of stream.getTracks()) track.stop();
-  removeLocalScreenPreview();
   statusText.textContent = "Compartilhamento parado";
   stopShareBtn.classList.add("hidden");
   shareBtn.classList.remove("hidden");
-}
-
-function removeLocalScreenPreview() {
-  // A tela remota é removida pelo evento screen-stopped; esta função existe
-  // para manter a transição local limpa se um preview for adicionado depois.
+  if (ws) ws.send(JSON.stringify({ type: "screen-share-ended" }));
 }
 
 leaveChannelBtn.addEventListener("click", () => {
@@ -809,6 +815,8 @@ function leaveCall() {
   if (localMicStream) for (const track of localMicStream.getTracks()) track.stop();
   for (const pc of pcsOut.values()) pc.close();
   for (const pc of pcsIn.values()) pc.close();
+  document.querySelectorAll('audio[id^="audio-"]').forEach((el) => el.remove());
+  audioAnalysers.clear();
   pcsOut.clear();
   pcsIn.clear();
   knownPeers.clear();
@@ -820,7 +828,6 @@ function leaveCall() {
   micBtn.textContent = "🎤";
   micBtn.classList.remove("off");
   selfPeerId = null;
-  setTimeout(refreshVoicePresence, 100);
 }
 
 // ---------- Modal: criar/entrar em servidor ----------
