@@ -60,6 +60,12 @@ const chatMessagesEl = document.getElementById("chat-messages");
 const chatEmptyEl = document.getElementById("chat-empty");
 const chatInput = document.getElementById("chat-input");
 const chatSendBtn = document.getElementById("chat-send-btn");
+const chatAttachBtn = document.getElementById("chat-attach-btn");
+const chatImageInput = document.getElementById("chat-image-input");
+const chatImagePreview = document.getElementById("chat-image-preview");
+const chatImagePreviewImg = document.getElementById("chat-image-preview-img");
+const chatImagePreviewRemove = document.getElementById("chat-image-preview-remove");
+let pendingChatImageDataUrl = null;
 
 const serverModal = document.getElementById("server-modal");
 const tabCreateServer = document.getElementById("tab-create-server");
@@ -156,6 +162,34 @@ function resizeImageFile(file, maxSize = 160) {
         const sy = (img.height - side) / 2;
         ctx.drawImage(img, sx, sy, side, side, 0, 0, maxSize, maxSize);
         resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function resizeImageKeepAspect(file, maxDimension = 640) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > maxDimension) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else if (height > maxDimension) {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
       };
       img.src = reader.result;
     };
@@ -435,23 +469,65 @@ function appendChatMessage(msg) {
         <span class="chat-msg-author${isMe ? " me" : ""}">${escapeHtml(msg.username)}</span>
         <span class="chat-msg-time">${time}</span>
       </div>
-      <div class="chat-msg-text">${escapeHtml(msg.text)}</div>
+      ${msg.text ? `<div class="chat-msg-text">${escapeHtml(msg.text)}</div>` : ""}
+      ${msg.imageDataUrl ? `<img class="chat-msg-image" src="${msg.imageDataUrl}" alt="imagem" />` : ""}
     </div>
   `;
+  if (msg.imageDataUrl) {
+    el.querySelector(".chat-msg-image").addEventListener("click", () => window.open(msg.imageDataUrl, "_blank"));
+  }
   chatMessagesEl.appendChild(el);
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 }
 
 function sendChatMessage() {
   const text = chatInput.value.trim();
-  if (!text || !ws || ws.readyState !== WebSocket.OPEN || !activeChannelId) return;
-  ws.send(JSON.stringify({ type: "chat-message", channelId: activeChannelId, text }));
+  if ((!text && !pendingChatImageDataUrl) || !ws || ws.readyState !== WebSocket.OPEN || !activeChannelId) return;
+  ws.send(
+    JSON.stringify({
+      type: "chat-message",
+      channelId: activeChannelId,
+      text,
+      imageDataUrl: pendingChatImageDataUrl || undefined,
+    })
+  );
   chatInput.value = "";
+  clearPendingChatImage();
 }
 
 chatSendBtn.addEventListener("click", sendChatMessage);
 chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendChatMessage();
+});
+
+// ---------- Enviar imagem no chat (colar ou escolher arquivo) ----------
+async function setPendingChatImage(file) {
+  if (!file || !file.type.startsWith("image/")) return;
+  pendingChatImageDataUrl = await resizeImageKeepAspect(file, 640);
+  chatImagePreviewImg.src = pendingChatImageDataUrl;
+  chatImagePreview.classList.remove("hidden");
+}
+
+function clearPendingChatImage() {
+  pendingChatImageDataUrl = null;
+  chatImagePreview.classList.add("hidden");
+  chatImagePreviewImg.src = "";
+  chatImageInput.value = "";
+}
+
+chatAttachBtn.addEventListener("click", () => chatImageInput.click());
+chatImageInput.addEventListener("change", () => setPendingChatImage(chatImageInput.files[0]));
+chatImagePreviewRemove.addEventListener("click", clearPendingChatImage);
+
+chatInput.addEventListener("paste", (e) => {
+  const items = e.clipboardData?.items || [];
+  for (const item of items) {
+    if (item.type.startsWith("image/")) {
+      setPendingChatImage(item.getAsFile());
+      e.preventDefault();
+      break;
+    }
+  }
 });
 
 // ---------- WebSocket + WebRTC (suporta várias pessoas na mesma chamada) ----------
@@ -886,6 +962,41 @@ function leaveCall() {
   selfPeerId = null;
 }
 
+async function openDirectMessage(friendUser) {
+  try {
+    const data = await api(`/api/friends/${friendUser.id}/dm`, { method: "POST" });
+    leaveCall();
+    activeServerId = null;
+    activeChannelId = data.channelId;
+    activeChannelType = "dm";
+
+    friendsPanel.style.display = "none";
+    document.querySelector(".channel-panel").style.display = "none";
+    document.querySelector(".main-panel").style.display = "flex";
+    emptyState.classList.add("hidden");
+    callView.classList.remove("hidden");
+
+    activeChannelName.textContent = friendUser.username;
+    waitingState.classList.remove("hidden");
+    videoGrid.innerHTML = "";
+    shareBtn.classList.remove("hidden");
+    stopShareBtn.classList.add("hidden");
+    statusText.textContent = "Conectado";
+
+    const callColumn = document.querySelector(".call-column");
+    const chatColumn = document.querySelector(".chat-column");
+    callColumn.style.display = "flex";
+    chatColumn.style.display = "flex";
+    chatColumn.style.width = "";
+
+    loadMessageHistory(activeChannelId);
+    connectToChannel(activeChannelId);
+    renderParticipantsBar();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
 // ---------- Modal: criar/entrar em servidor ----------
 addServerBtn.addEventListener("click", () => {
   serverModal.classList.remove("hidden");
@@ -1106,7 +1217,7 @@ function renderFriendRow({ user, requestId, kind }) {
          <button class="friend-action-btn decline" data-id="${requestId}">Recusar</button>`
       : kind === "outgoing"
       ? `<button class="friend-action-btn decline" data-id="${requestId}">Cancelar</button>`
-      : "";
+      : `<button class="friend-action-btn accept" id="dm-btn">Conversar</button>`;
   row.innerHTML = `
     <div class="avatar">${avatarHtml(user.username, user.avatarDataUrl)}</div>
     <div class="friend-name">${escapeHtml(user.username)}</div>
@@ -1117,6 +1228,8 @@ function renderFriendRow({ user, requestId, kind }) {
     row.querySelector(".decline").addEventListener("click", () => respondFriendRequest(requestId, "decline"));
   } else if (kind === "outgoing") {
     row.querySelector(".decline").addEventListener("click", () => respondFriendRequest(requestId, "decline"));
+  } else if (kind === "friend") {
+    row.querySelector("#dm-btn").addEventListener("click", () => openDirectMessage(user));
   }
   return row;
 }
