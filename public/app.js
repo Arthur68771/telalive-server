@@ -67,6 +67,13 @@ const chatImagePreviewImg = document.getElementById("chat-image-preview-img");
 const chatImagePreviewRemove = document.getElementById("chat-image-preview-remove");
 let pendingChatImageDataUrl = null;
 
+const mentionAutocomplete = document.getElementById("mention-autocomplete");
+let activeServerMembersCache = new Map(); // serverId -> [{id, username, avatarDataUrl}]
+let mentionMatches = [];
+let mentionActiveIndex = -1;
+let titleFlashInterval = null;
+const originalDocumentTitle = document.title;
+
 const serverModal = document.getElementById("server-modal");
 const tabCreateServer = document.getElementById("tab-create-server");
 const tabJoinServer = document.getElementById("tab-join-server");
@@ -392,6 +399,187 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// ---------- Sons de entrar/sair da call e de menção (gerados na hora, sem arquivo) ----------
+let soundAudioCtx = null;
+function getSoundCtx() {
+  if (!soundAudioCtx) soundAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (soundAudioCtx.state === "suspended") soundAudioCtx.resume();
+  return soundAudioCtx;
+}
+
+function playTone(freqStart, freqEnd, duration, volume = 0.15, delay = 0) {
+  try {
+    const ctx = getSoundCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    const startTime = ctx.currentTime + delay;
+    osc.frequency.setValueAtTime(freqStart, startTime);
+    osc.frequency.linearRampToValueAtTime(freqEnd, startTime + duration);
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(volume, startTime + 0.02);
+    gain.gain.linearRampToValueAtTime(0, startTime + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.03);
+  } catch (err) {
+    console.error("Não foi possível tocar o som:", err);
+  }
+}
+
+function playJoinSound() {
+  playTone(520, 780, 0.12);
+  playTone(780, 1040, 0.12, 0.13, 0.09);
+}
+
+function playLeaveSound() {
+  playTone(720, 480, 0.14);
+  playTone(480, 320, 0.14, 0.12, 0.09);
+}
+
+function playMentionSound() {
+  playTone(880, 880, 0.09, 0.18);
+  playTone(1108, 1108, 0.12, 0.16, 0.1);
+}
+
+// ---------- Menções com @ ----------
+async function getActiveServerMembers() {
+  if (!activeServerId) return [];
+  if (activeServerMembersCache.has(activeServerId)) return activeServerMembersCache.get(activeServerId);
+  try {
+    const members = await api(`/api/servers/${activeServerId}/members`);
+    activeServerMembersCache.set(activeServerId, members);
+    return members;
+  } catch {
+    return [];
+  }
+}
+
+function messageTextMentionsUser(text, username) {
+  if (!text || !username) return false;
+  const pattern = new RegExp(`(^|\\s)@${escapeRegExp(username)}(?=\\s|$)`, "i");
+  return pattern.test(text);
+}
+
+function renderMessageText(text) {
+  const escaped = escapeHtml(text);
+  return escaped.replace(/(^|\s)@([a-zA-Z0-9_]{2,24})/g, (full, prefix, name) => {
+    const isMe = currentUser && name.toLowerCase() === currentUser.username.toLowerCase();
+    return `${prefix}<span class="mention${isMe ? " mention-me" : ""}">@${name}</span>`;
+  });
+}
+
+async function handleMentionInput() {
+  const cursor = chatInput.selectionStart;
+  const textBefore = chatInput.value.slice(0, cursor);
+  const match = textBefore.match(/(?:^|\s)@([a-zA-Z0-9_]{0,24})$/);
+  if (!match) {
+    closeMentionAutocomplete();
+    return;
+  }
+  const query = match[1].toLowerCase();
+  const members = await getActiveServerMembers();
+  mentionMatches = members
+    .filter((m) => m.id !== currentUser?.id)
+    .filter((m) => m.username.toLowerCase().startsWith(query))
+    .slice(0, 6);
+  if (mentionMatches.length === 0) {
+    closeMentionAutocomplete();
+    return;
+  }
+  mentionActiveIndex = 0;
+  renderMentionAutocomplete();
+}
+
+function renderMentionAutocomplete() {
+  mentionAutocomplete.innerHTML = "";
+  mentionMatches.forEach((m, i) => {
+    const row = document.createElement("div");
+    row.className = "mention-option" + (i === mentionActiveIndex ? " active" : "");
+    row.innerHTML = `<div class="avatar">${avatarHtml(m.username, m.avatarDataUrl)}</div><span>${escapeHtml(m.username)}</span>`;
+    row.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      selectMention(i);
+    });
+    mentionAutocomplete.appendChild(row);
+  });
+  mentionAutocomplete.classList.remove("hidden");
+}
+
+function closeMentionAutocomplete() {
+  mentionMatches = [];
+  mentionActiveIndex = -1;
+  mentionAutocomplete.classList.add("hidden");
+  mentionAutocomplete.innerHTML = "";
+}
+
+function selectMention(index) {
+  const member = mentionMatches[index];
+  if (!member) return;
+  const cursor = chatInput.selectionStart;
+  const textBefore = chatInput.value.slice(0, cursor);
+  const textAfter = chatInput.value.slice(cursor);
+  const newBefore = textBefore.replace(/@([a-zA-Z0-9_]{0,24})$/, `@${member.username} `);
+  chatInput.value = newBefore + textAfter;
+  const newCursor = newBefore.length;
+  chatInput.focus();
+  chatInput.setSelectionRange(newCursor, newCursor);
+  closeMentionAutocomplete();
+}
+
+function handleMentionKeydown(e) {
+  if (mentionAutocomplete.classList.contains("hidden")) return false;
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    mentionActiveIndex = (mentionActiveIndex + 1) % mentionMatches.length;
+    renderMentionAutocomplete();
+    return true;
+  }
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    mentionActiveIndex = (mentionActiveIndex - 1 + mentionMatches.length) % mentionMatches.length;
+    renderMentionAutocomplete();
+    return true;
+  }
+  if (e.key === "Enter" || e.key === "Tab") {
+    e.preventDefault();
+    selectMention(mentionActiveIndex);
+    return true;
+  }
+  if (e.key === "Escape") {
+    closeMentionAutocomplete();
+    return true;
+  }
+  return false;
+}
+
+chatInput.addEventListener("input", handleMentionInput);
+chatInput.addEventListener("blur", () => setTimeout(closeMentionAutocomplete, 120));
+
+// ---------- Avisa quem foi mencionado enquanto a aba está em segundo plano ----------
+function notifyMentionIfHidden(message) {
+  if (!document.hidden) return;
+  if (titleFlashInterval) return;
+  let toggle = false;
+  titleFlashInterval = setInterval(() => {
+    document.title = toggle ? originalDocumentTitle : `🔔 ${message.username} mencionou você`;
+    toggle = !toggle;
+  }, 1000);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && titleFlashInterval) {
+    clearInterval(titleFlashInterval);
+    titleFlashInterval = null;
+    document.title = originalDocumentTitle;
+  }
+});
+
 inviteHint.addEventListener("click", () => {
   navigator.clipboard.writeText(inviteCodeEl.textContent);
   inviteHint.querySelector("strong").textContent = "copiado!";
@@ -458,10 +646,11 @@ function appendChatMessage(msg) {
   if (emptyMsg) emptyMsg.remove();
 
   const isMe = currentUser && msg.userId === currentUser.id;
+  const mentionsMe = !isMe && messageTextMentionsUser(msg.text, currentUser?.username);
   const time = new Date(msg.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
   const el = document.createElement("div");
-  el.className = "chat-msg";
+  el.className = "chat-msg" + (mentionsMe ? " mentioned" : "");
   el.innerHTML = `
     <div class="avatar">${avatarHtml(msg.username, msg.avatarDataUrl)}</div>
     <div class="chat-msg-body">
@@ -469,7 +658,7 @@ function appendChatMessage(msg) {
         <span class="chat-msg-author${isMe ? " me" : ""}">${escapeHtml(msg.username)}</span>
         <span class="chat-msg-time">${time}</span>
       </div>
-      ${msg.text ? `<div class="chat-msg-text">${escapeHtml(msg.text)}</div>` : ""}
+      ${msg.text ? `<div class="chat-msg-text">${renderMessageText(msg.text)}</div>` : ""}
       ${msg.imageDataUrl ? `<img class="chat-msg-image" src="${msg.imageDataUrl}" alt="imagem" />` : ""}
     </div>
   `;
