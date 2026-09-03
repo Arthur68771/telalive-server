@@ -377,8 +377,10 @@ function renderChannelList() {
 function renderChannelItem(channel) {
   const item = document.createElement("div");
   item.className = "channel-item" + (channel.id === activeChannelId ? " active" : "") + (channel.muted ? " muted" : "");
+  item.dataset.channelId = channel.id;
   item.innerHTML = `
     <span class="hash">${channel.type === "voice" ? "🔊" : "#"}</span><span>${escapeHtml(channel.name)}</span>
+    <div class="channel-item-presence" id="presence-${channel.id}"></div>
     <button class="mute-toggle" title="${channel.muted ? "Reativar" : "Silenciar"}">${channel.muted ? "🔇" : "🔊"}</button>
   `;
   item.addEventListener("click", (e) => {
@@ -751,6 +753,29 @@ function renderParticipantsBar() {
     circle.dataset.key = peerId;
     circle.innerHTML = `<div class="avatar-lg">${avatarHtml(peer.username, peer.avatarDataUrl)}</div><div class="participant-name">${escapeHtml(peer.username)}</div>`;
     participantsCircleRow.appendChild(circle);
+  }
+
+  updateChannelSidebarPresence();
+}
+
+function updateChannelSidebarPresence() {
+  if (!activeChannelId) return;
+  const holder = document.getElementById(`presence-${activeChannelId}`);
+  if (!holder) return;
+  holder.innerHTML = "";
+
+  const meMini = document.createElement("div");
+  meMini.className = "mini-avatar";
+  meMini.title = "Você";
+  meMini.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
+  holder.appendChild(meMini);
+
+  for (const peer of knownPeers.values()) {
+    const mini = document.createElement("div");
+    mini.className = "mini-avatar";
+    mini.title = peer.username;
+    mini.innerHTML = avatarHtml(peer.username, peer.avatarDataUrl);
+    holder.appendChild(mini);
   }
 }
 
