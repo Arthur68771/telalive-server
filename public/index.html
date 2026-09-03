@@ -259,25 +259,7 @@
   .chat-msg-author.me { color: var(--accent-hover); }
   .chat-msg-time { font-size: 0.7rem; color: var(--muted); }
   .chat-msg-text { font-size: 0.9rem; line-height: 1.4; word-break: break-word; }
-  .chat-input-row { position: relative; display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); flex-shrink: 0; }
-  .chat-msg.mentioned { background: rgba(250, 166, 26, 0.1); border-radius: 8px; padding: 6px 8px; margin: -6px -8px 0; }
-  .mention {
-    color: var(--accent-hover); background: rgba(88, 101, 242, 0.15);
-    padding: 0 3px; border-radius: 4px; font-weight: 600;
-  }
-  .mention.mention-me { background: rgba(250, 166, 26, 0.28); color: #faa61a; }
-  .mention-autocomplete {
-    position: absolute; bottom: 100%; left: 12px; right: 12px; margin-bottom: 6px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-    overflow-y: auto; max-height: 190px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); z-index: 20;
-  }
-  .mention-autocomplete.hidden { display: none; }
-  .mention-option {
-    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
-    cursor: pointer; font-size: 0.85rem;
-  }
-  .mention-option .avatar { width: 24px; height: 24px; font-size: 0.68rem; flex-shrink: 0; }
-  .mention-option:hover, .mention-option.active { background: var(--bg); }
+  .chat-input-row { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); flex-shrink: 0; }
   .chat-input-row input {
     flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
     background: var(--bg); color: var(--text); font-size: 0.9rem; min-width: 0;
@@ -306,6 +288,21 @@
   .chat-msg-image {
     max-width: 260px; max-height: 260px; border-radius: 10px; margin-top: 6px; cursor: pointer; display: block;
   }
+  .mention-dropdown {
+    position: absolute; bottom: 100%; left: 12px; right: 12px; margin-bottom: 8px;
+    background: var(--elevated); border: 1px solid var(--border); border-radius: 10px;
+    max-height: 200px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 20;
+  }
+  .mention-item {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; font-size: 0.9rem;
+  }
+  .mention-item:hover, .mention-item.active { background: var(--elevated-hover); }
+  .mention-item .avatar { width: 22px; height: 22px; font-size: 0.65rem; }
+  .mention-everyone {
+    width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: white;
+    display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 700; flex-shrink: 0;
+  }
+  .chat-mention { color: var(--accent-hover); background: var(--accent-soft, rgba(124,92,246,0.16)); border-radius: 4px; padding: 0 3px; font-weight: 600; }
 
   /* ---------- Modal simples (criar/entrar em servidor, criar canal) ---------- */
   .modal-backdrop {
@@ -518,8 +515,8 @@
             <img id="chat-image-preview-img" alt="" />
             <button id="chat-image-preview-remove" title="Remover imagem">✕</button>
           </div>
-          <div class="chat-input-row">
-            <div id="mention-autocomplete" class="mention-autocomplete hidden"></div>
+          <div class="chat-input-row" style="position: relative;">
+            <div class="mention-dropdown hidden" id="mention-dropdown"></div>
             <button class="chat-attach-btn" id="chat-attach-btn" title="Anexar imagem">+</button>
             <input type="file" accept="image/*" id="chat-image-input" class="hidden" />
             <input id="chat-input" placeholder="Escreva uma mensagem..." maxlength="2000" />
