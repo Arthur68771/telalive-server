@@ -58,9 +58,9 @@ const audioAnalysers = new Map(); // "me" ou peerId -> AnalyserNode
 let speakingLoopRunning = false;
 
 // ---------- Sons de notificação ----------
-const joinSound = new Audio("sounds/join.mp3");
-const leaveSound = new Audio("sounds/leave.mp3");
-const messageSound = new Audio("sounds/message.mp3");
+const joinSound = new Audio("join.mp3");
+const leaveSound = new Audio("leave.mp3");
+const messageSound = new Audio("message.mp3");
 [joinSound, leaveSound, messageSound].forEach((a) => (a.volume = 0.5));
 function playJoinSound() { joinSound.currentTime = 0; joinSound.play().catch(() => {}); }
 function playLeaveSound() { leaveSound.currentTime = 0; leaveSound.play().catch(() => {}); }
