@@ -31,7 +31,7 @@ async function startServer(port = 3000) {
   const sessions = new Map();
 
   const app = express();
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "8mb" }));
   app.use(express.static(path.join(__dirname, "public")));
 
   // ---------- Autenticação ----------
@@ -566,7 +566,11 @@ async function startServer(port = 3000) {
         if (typeof msg.imageDataUrl === "string" && msg.imageDataUrl.startsWith("data:image/")) {
           imageDataUrl = msg.imageDataUrl;
         }
-        if (!text && !imageDataUrl) return;
+        let audioDataUrl = null;
+        if (typeof msg.audioDataUrl === "string" && msg.audioDataUrl.startsWith("data:audio/")) {
+          audioDataUrl = msg.audioDataUrl;
+        }
+        if (!text && !imageDataUrl && !audioDataUrl) return;
 
         const author = db.users.find((u) => u.id === ws.userId);
         const message = {
@@ -577,6 +581,7 @@ async function startServer(port = 3000) {
           avatarDataUrl: author ? author.avatarDataUrl || null : null,
           text,
           imageDataUrl,
+          audioDataUrl,
           createdAt: Date.now(),
         };
         db.messages.push(message);
