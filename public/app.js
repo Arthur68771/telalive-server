@@ -75,6 +75,14 @@ const chatImagePreview = document.getElementById("chat-image-preview");
 const chatImagePreviewImg = document.getElementById("chat-image-preview-img");
 const chatImagePreviewRemove = document.getElementById("chat-image-preview-remove");
 let pendingChatImageDataUrl = null;
+
+const chatRecordBtn = document.getElementById("chat-record-btn");
+const chatAudioPreview = document.getElementById("chat-audio-preview");
+const chatAudioPreviewPlayer = document.getElementById("chat-audio-preview-player");
+const chatAudioPreviewRemove = document.getElementById("chat-audio-preview-remove");
+let pendingChatAudioDataUrl = null;
+let audioRecorder = null;
+let audioRecorderChunks = [];
 const mentionDropdown = document.getElementById("mention-dropdown");
 let cachedFriendsForMention = null;
 let mentionActiveIndex = 0;
@@ -485,6 +493,7 @@ function appendChatMessage(msg) {
       </div>
       ${msg.text ? `<div class="chat-msg-text">${highlightMentions(escapeHtml(msg.text))}</div>` : ""}
       ${msg.imageDataUrl ? `<img class="chat-msg-image" src="${msg.imageDataUrl}" alt="imagem" />` : ""}
+      ${msg.audioDataUrl ? `<audio class="chat-msg-audio" controls src="${msg.audioDataUrl}"></audio>` : ""}
     </div>
   `;
   if (msg.imageDataUrl) {
@@ -496,17 +505,21 @@ function appendChatMessage(msg) {
 
 function sendChatMessage() {
   const text = chatInput.value.trim();
-  if ((!text && !pendingChatImageDataUrl) || !ws || ws.readyState !== WebSocket.OPEN || !activeChannelId) return;
+  if ((!text && !pendingChatImageDataUrl && !pendingChatAudioDataUrl) || !ws || ws.readyState !== WebSocket.OPEN || !activeChannelId) return;
   ws.send(
     JSON.stringify({
       type: "chat-message",
       channelId: activeChannelId,
       text,
       imageDataUrl: pendingChatImageDataUrl || undefined,
+      audioDataUrl: pendingChatAudioDataUrl || undefined,
     })
   );
   chatInput.value = "";
   clearPendingChatImage();
+  pendingChatAudioDataUrl = null;
+  chatAudioPreview.classList.add("hidden");
+  chatAudioPreviewPlayer.src = "";
 }
 
 chatSendBtn.addEventListener("click", sendChatMessage);
@@ -532,6 +545,46 @@ function clearPendingChatImage() {
 chatAttachBtn.addEventListener("click", () => chatImageInput.click());
 chatImageInput.addEventListener("change", () => setPendingChatImage(chatImageInput.files[0]));
 chatImagePreviewRemove.addEventListener("click", clearPendingChatImage);
+
+// ---------- Gravar e enviar áudio (tipo WhatsApp) ----------
+chatRecordBtn.addEventListener("click", async () => {
+  if (audioRecorder && audioRecorder.state === "recording") {
+    audioRecorder.stop();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioRecorderChunks = [];
+    audioRecorder = new MediaRecorder(stream);
+    audioRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioRecorderChunks.push(e.data);
+    };
+    audioRecorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(audioRecorderChunks, { type: "audio/webm" });
+      const reader = new FileReader();
+      reader.onload = () => {
+        pendingChatAudioDataUrl = reader.result;
+        chatAudioPreviewPlayer.src = pendingChatAudioDataUrl;
+        chatAudioPreview.classList.remove("hidden");
+      };
+      reader.readAsDataURL(blob);
+      chatRecordBtn.classList.remove("recording");
+      chatRecordBtn.title = "Gravar áudio";
+    };
+    audioRecorder.start();
+    chatRecordBtn.classList.add("recording");
+    chatRecordBtn.title = "Parar gravação";
+  } catch (err) {
+    console.error("Não foi possível acessar o microfone:", err);
+  }
+});
+
+chatAudioPreviewRemove.addEventListener("click", () => {
+  pendingChatAudioDataUrl = null;
+  chatAudioPreview.classList.add("hidden");
+  chatAudioPreviewPlayer.src = "";
+});
 
 chatInput.addEventListener("paste", (e) => {
   const items = e.clipboardData?.items || [];
