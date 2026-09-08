@@ -288,6 +288,25 @@
   .chat-msg-image {
     max-width: 260px; max-height: 260px; border-radius: 10px; margin-top: 6px; cursor: pointer; display: block;
   }
+  .chat-msg-audio { margin-top: 6px; height: 36px; max-width: 260px; }
+
+  #chat-record-btn.recording {
+    background: var(--danger); color: white; border-color: transparent;
+    animation: pulse-record 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse-record {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.5); }
+    50% { box-shadow: 0 0 0 8px rgba(244, 63, 94, 0); }
+  }
+  .chat-audio-preview {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--border);
+  }
+  .chat-audio-preview audio { height: 34px; flex: 1; max-width: 280px; }
+  .chat-audio-preview button {
+    background: var(--elevated); border: none; color: var(--muted); width: 26px; height: 26px;
+    border-radius: 50%; cursor: pointer; flex-shrink: 0;
+  }
+  .chat-audio-preview button:hover { background: var(--danger); color: white; }
   .mention-dropdown {
     position: absolute; bottom: 100%; left: 12px; right: 12px; margin-bottom: 8px;
     background: var(--elevated); border: 1px solid var(--border); border-radius: 10px;
@@ -522,10 +541,15 @@
             <img id="chat-image-preview-img" alt="" />
             <button id="chat-image-preview-remove" title="Remover imagem">✕</button>
           </div>
+          <div class="chat-audio-preview hidden" id="chat-audio-preview">
+            <audio controls id="chat-audio-preview-player"></audio>
+            <button id="chat-audio-preview-remove" title="Remover áudio">✕</button>
+          </div>
           <div class="chat-input-row" style="position: relative;">
             <div class="mention-dropdown hidden" id="mention-dropdown"></div>
             <button class="chat-attach-btn" id="chat-attach-btn" title="Anexar imagem">+</button>
             <input type="file" accept="image/*" id="chat-image-input" class="hidden" />
+            <button class="chat-attach-btn" id="chat-record-btn" title="Gravar áudio">🎤</button>
             <input id="chat-input" placeholder="Escreva uma mensagem..." maxlength="2000" />
             <button class="chat-send-btn" id="chat-send-btn">Enviar</button>
           </div>
