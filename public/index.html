@@ -307,6 +307,38 @@
     border-radius: 50%; cursor: pointer; flex-shrink: 0;
   }
   .chat-audio-preview button:hover { background: var(--danger); color: white; }
+
+  .reply-banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 8px 12px; background: var(--elevated); border-top: 1px solid var(--border); font-size: 0.82rem; color: var(--muted);
+  }
+  .reply-banner button { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 0.9rem; }
+  .reply-banner button:hover { color: var(--text); }
+
+  .chat-msg-reply-quote {
+    display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--muted);
+    margin-bottom: 3px; padding-left: 10px; border-left: 2px solid var(--border);
+  }
+  .chat-msg { position: relative; }
+  .chat-msg-actions {
+    display: none; position: absolute; top: -14px; right: 4px; background: var(--elevated);
+    border: 1px solid var(--border); border-radius: 8px; padding: 2px; gap: 2px;
+  }
+  .chat-msg:hover .chat-msg-actions { display: flex; }
+  .chat-msg-action-btn {
+    background: transparent; border: none; color: var(--muted); cursor: pointer;
+    padding: 5px 7px; border-radius: 6px; font-size: 0.85rem;
+  }
+  .chat-msg-action-btn:hover { background: var(--elevated-hover); color: var(--text); }
+  .chat-msg-edited-tag { font-size: 0.7rem; color: var(--muted); margin-left: 4px; }
+  .chat-msg-edit-input {
+    width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--accent);
+    background: var(--bg); color: var(--text); font-size: 0.9rem; margin-top: 4px;
+  }
+  .forward-target-item {
+    padding: 9px 12px; border-radius: 8px; cursor: pointer; font-size: 0.9rem;
+  }
+  .forward-target-item:hover { background: var(--elevated-hover); }
   .mention-dropdown {
     position: absolute; bottom: 100%; left: 12px; right: 12px; margin-bottom: 8px;
     background: var(--elevated); border: 1px solid var(--border); border-radius: 10px;
@@ -545,6 +577,10 @@
             <audio controls id="chat-audio-preview-player"></audio>
             <button id="chat-audio-preview-remove" title="Remover áudio">✕</button>
           </div>
+          <div class="reply-banner hidden" id="reply-banner">
+            <span id="reply-banner-text"></span>
+            <button id="reply-banner-cancel" title="Cancelar resposta">✕</button>
+          </div>
           <div class="chat-input-row" style="position: relative;">
             <div class="mention-dropdown hidden" id="mention-dropdown"></div>
             <button class="chat-attach-btn" id="chat-attach-btn" title="Anexar imagem">+</button>
@@ -690,6 +726,18 @@
     <div class="modal-actions">
       <button class="secondary-btn" id="server-icon-modal-cancel">Cancelar</button>
       <button class="primary-btn" id="server-icon-modal-confirm">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: encaminhar mensagem -->
+<div class="modal-backdrop hidden" id="forward-modal">
+  <div class="modal">
+    <h3>Encaminhar mensagem</h3>
+    <div id="forward-targets-list" style="max-height:280px; overflow-y:auto;"></div>
+    <p class="form-status" id="forward-modal-status"></p>
+    <div class="modal-actions">
+      <button class="secondary-btn" id="forward-modal-cancel">Fechar</button>
     </div>
   </div>
 </div>
