@@ -463,6 +463,47 @@ async function startServer(port = 3000) {
     res.json(msgs);
   });
 
+  app.patch("/api/messages/:messageId", requireAuth, (req, res) => {
+    const message = db.messages.find((m) => m.id === req.params.messageId);
+    if (!message) return res.status(404).json({ error: "Mensagem não encontrada." });
+    if (message.userId !== req.userId) return res.status(403).json({ error: "Você só pode editar suas próprias mensagens." });
+
+    const { text } = req.body || {};
+    if (typeof text !== "string" || !text.trim()) {
+      return res.status(400).json({ error: "A mensagem não pode ficar vazia." });
+    }
+    message.text = text.trim().slice(0, 2000);
+    message.editedAt = Date.now();
+    persist();
+
+    const subs = chatSubscribers.get(message.channelId);
+    if (subs) for (const peer of subs) send(peer, { type: "message-edited", message });
+    res.json(message);
+  });
+
+  app.delete("/api/messages/:messageId", requireAuth, (req, res) => {
+    const message = db.messages.find((m) => m.id === req.params.messageId);
+    if (!message) return res.status(404).json({ error: "Mensagem não encontrada." });
+    if (message.userId !== req.userId) return res.status(403).json({ error: "Você só pode excluir suas próprias mensagens." });
+
+    db.messages = db.messages.filter((m) => m.id !== req.params.messageId);
+    persist();
+
+    const subs = chatSubscribers.get(message.channelId);
+    if (subs) for (const peer of subs) send(peer, { type: "message-deleted", messageId: message.id, channelId: message.channelId });
+    res.json({ ok: true });
+  });
+
+  app.post("/api/channels/:channelId/forward", requireAuth, (req, res) => {
+    if (!channelIfMember(req.params.channelId, req.userId)) {
+      return res.status(403).json({ error: "Você não tem acesso a esse canal." });
+    }
+    const { text, imageDataUrl, audioDataUrl } = req.body || {};
+    const message = createChatMessage(req.params.channelId, req.userId, { text, imageDataUrl, audioDataUrl });
+    if (!message) return res.status(400).json({ error: "Nada para encaminhar." });
+    res.json(message);
+  });
+
   // ---------- WebSocket: chat em tempo real + sinalização WebRTC ----------
   // "callRooms" cuida da chamada de vídeo/tela - agora suporta várias
   // pessoas ao mesmo tempo: cada pessoa se conecta diretamente com
@@ -485,6 +526,43 @@ async function startServer(port = 3000) {
 
   function send(ws, msg) {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+  }
+
+  function createChatMessage(channelId, userId, { text, imageDataUrl, audioDataUrl, replyToId }) {
+    const cleanText = (text || "").trim().slice(0, 2000);
+    let cleanImage = null;
+    if (typeof imageDataUrl === "string" && imageDataUrl.startsWith("data:image/")) cleanImage = imageDataUrl;
+    let cleanAudio = null;
+    if (typeof audioDataUrl === "string" && audioDataUrl.startsWith("data:audio/")) cleanAudio = audioDataUrl;
+    if (!cleanText && !cleanImage && !cleanAudio) return null;
+
+    let replyTo = null;
+    if (replyToId) {
+      const original = db.messages.find((m) => m.id === replyToId);
+      if (original) replyTo = { id: original.id, username: original.username, text: original.text.slice(0, 120) };
+    }
+
+    const author = db.users.find((u) => u.id === userId);
+    const message = {
+      id: crypto.randomUUID(),
+      channelId,
+      userId,
+      username: author ? author.username : "?",
+      avatarDataUrl: author ? author.avatarDataUrl || null : null,
+      text: cleanText,
+      imageDataUrl: cleanImage,
+      audioDataUrl: cleanAudio,
+      replyTo,
+      createdAt: Date.now(),
+    };
+    db.messages.push(message);
+    persist();
+
+    const subs = chatSubscribers.get(channelId);
+    if (subs) {
+      for (const peer of subs) send(peer, { type: "chat-message", message });
+    }
+    return message;
   }
 
   wss.on("connection", (ws, req) => {
@@ -561,36 +639,7 @@ async function startServer(port = 3000) {
 
       if (msg.type === "chat-message") {
         if (!channelIfMember(msg.channelId, ws.userId)) return;
-        const text = (msg.text || "").trim().slice(0, 2000);
-        let imageDataUrl = null;
-        if (typeof msg.imageDataUrl === "string" && msg.imageDataUrl.startsWith("data:image/")) {
-          imageDataUrl = msg.imageDataUrl;
-        }
-        let audioDataUrl = null;
-        if (typeof msg.audioDataUrl === "string" && msg.audioDataUrl.startsWith("data:audio/")) {
-          audioDataUrl = msg.audioDataUrl;
-        }
-        if (!text && !imageDataUrl && !audioDataUrl) return;
-
-        const author = db.users.find((u) => u.id === ws.userId);
-        const message = {
-          id: crypto.randomUUID(),
-          channelId: msg.channelId,
-          userId: ws.userId,
-          username: author ? author.username : "?",
-          avatarDataUrl: author ? author.avatarDataUrl || null : null,
-          text,
-          imageDataUrl,
-          audioDataUrl,
-          createdAt: Date.now(),
-        };
-        db.messages.push(message);
-        persist();
-
-        const subs = chatSubscribers.get(msg.channelId);
-        if (subs) {
-          for (const peer of subs) send(peer, { type: "chat-message", message });
-        }
+        createChatMessage(msg.channelId, ws.userId, msg);
         return;
       }
 
