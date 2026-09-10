@@ -83,6 +83,17 @@ const chatAudioPreviewRemove = document.getElementById("chat-audio-preview-remov
 let pendingChatAudioDataUrl = null;
 let audioRecorder = null;
 let audioRecorderChunks = [];
+
+let replyingToMessage = null;
+const replyBanner = document.getElementById("reply-banner");
+const replyBannerText = document.getElementById("reply-banner-text");
+const replyBannerCancel = document.getElementById("reply-banner-cancel");
+
+const forwardModal = document.getElementById("forward-modal");
+const forwardTargetsList = document.getElementById("forward-targets-list");
+const forwardModalStatus = document.getElementById("forward-modal-status");
+const forwardModalCancel = document.getElementById("forward-modal-cancel");
+let forwardingMessage = null;
 const mentionDropdown = document.getElementById("mention-dropdown");
 let cachedFriendsForMention = null;
 let mentionActiveIndex = 0;
@@ -484,14 +495,25 @@ function appendChatMessage(msg) {
 
   const el = document.createElement("div");
   el.className = "chat-msg";
+  el.dataset.messageId = msg.id;
   el.innerHTML = `
+    <div class="chat-msg-actions">
+      <button class="chat-msg-action-btn" data-action="reply" title="Responder">↩️</button>
+      ${isMe ? '<button class="chat-msg-action-btn" data-action="edit" title="Editar">✏️</button>' : ""}
+      <button class="chat-msg-action-btn" data-action="forward" title="Encaminhar">➡️</button>
+      ${isMe ? '<button class="chat-msg-action-btn" data-action="delete" title="Excluir">🗑️</button>' : ""}
+    </div>
     <div class="avatar">${avatarHtml(msg.username, msg.avatarDataUrl)}</div>
     <div class="chat-msg-body">
       <div class="chat-msg-head">
         <span class="chat-msg-author${isMe ? " me" : ""}">${escapeHtml(msg.username)}</span>
         <span class="chat-msg-time">${time}</span>
+        ${msg.editedAt ? '<span class="chat-msg-edited-tag">(editado)</span>' : ""}
       </div>
-      ${msg.text ? `<div class="chat-msg-text">${highlightMentions(escapeHtml(msg.text))}</div>` : ""}
+      ${msg.replyTo ? `<div class="chat-msg-reply-quote">↪ ${escapeHtml(msg.replyTo.username)}: ${escapeHtml(msg.replyTo.text)}</div>` : ""}
+      <div class="chat-msg-text-wrap">
+        ${msg.text ? `<div class="chat-msg-text">${highlightMentions(escapeHtml(msg.text))}</div>` : ""}
+      </div>
       ${msg.imageDataUrl ? `<img class="chat-msg-image" src="${msg.imageDataUrl}" alt="imagem" />` : ""}
       ${msg.audioDataUrl ? `<audio class="chat-msg-audio" controls src="${msg.audioDataUrl}"></audio>` : ""}
     </div>
@@ -499,6 +521,13 @@ function appendChatMessage(msg) {
   if (msg.imageDataUrl) {
     el.querySelector(".chat-msg-image").addEventListener("click", () => window.open(msg.imageDataUrl, "_blank"));
   }
+  el.querySelector('[data-action="reply"]').addEventListener("click", () => setReplyState(msg));
+  el.querySelector('[data-action="forward"]').addEventListener("click", () => openForwardModal(msg));
+  const editBtn = el.querySelector('[data-action="edit"]');
+  if (editBtn) editBtn.addEventListener("click", () => startEditingMessage(el, msg));
+  const deleteBtn = el.querySelector('[data-action="delete"]');
+  if (deleteBtn) deleteBtn.addEventListener("click", () => deleteMessage(msg.id));
+
   chatMessagesEl.appendChild(el);
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 }
@@ -513,6 +542,7 @@ function sendChatMessage() {
       text,
       imageDataUrl: pendingChatImageDataUrl || undefined,
       audioDataUrl: pendingChatAudioDataUrl || undefined,
+      replyToId: replyingToMessage?.id || undefined,
     })
   );
   chatInput.value = "";
@@ -520,6 +550,7 @@ function sendChatMessage() {
   pendingChatAudioDataUrl = null;
   chatAudioPreview.classList.add("hidden");
   chatAudioPreviewPlayer.src = "";
+  clearReplyState();
 }
 
 chatSendBtn.addEventListener("click", sendChatMessage);
@@ -778,6 +809,27 @@ function connectToChannel(channelId) {
         if (msg.message.userId !== currentUser?.id) playMessageSound();
         appendChatMessage(msg.message);
         break;
+
+      case "message-edited": {
+        const el = chatMessagesEl.querySelector(`[data-message-id="${msg.message.id}"]`);
+        if (el) {
+          const wrap = el.querySelector(".chat-msg-text-wrap");
+          wrap.innerHTML = `<div class="chat-msg-text">${highlightMentions(escapeHtml(msg.message.text))}</div>`;
+          if (!el.querySelector(".chat-msg-edited-tag")) {
+            el.querySelector(".chat-msg-time").insertAdjacentHTML("afterend", '<span class="chat-msg-edited-tag">(editado)</span>');
+          }
+        }
+        break;
+      }
+
+      case "message-deleted": {
+        const el = chatMessagesEl.querySelector(`[data-message-id="${msg.messageId}"]`);
+        if (el) el.remove();
+        if (chatMessagesEl.children.length === 0) {
+          chatMessagesEl.innerHTML = '<p class="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>';
+        }
+        break;
+      }
     }
   };
 }
@@ -1607,6 +1659,118 @@ categoryModalConfirm.addEventListener("click", async () => {
     categoryModalStatus.textContent = err.message;
   }
 });
+
+// ---------- Responder mensagem ----------
+function setReplyState(msg) {
+  replyingToMessage = { id: msg.id, username: msg.username, text: (msg.text || (msg.imageDataUrl ? "📷 imagem" : msg.audioDataUrl ? "🎤 áudio" : "")).slice(0, 80) };
+  replyBannerText.textContent = `Respondendo a ${msg.username}: ${replyingToMessage.text}`;
+  replyBanner.classList.remove("hidden");
+  chatInput.focus();
+}
+
+function clearReplyState() {
+  replyingToMessage = null;
+  replyBanner.classList.add("hidden");
+}
+
+replyBannerCancel.addEventListener("click", clearReplyState);
+
+// ---------- Editar mensagem ----------
+function startEditingMessage(el, msg) {
+  const wrap = el.querySelector(".chat-msg-text-wrap");
+  const original = wrap.innerHTML;
+  wrap.innerHTML = `<input class="chat-msg-edit-input" value="${msg.text.replace(/"/g, "&quot;")}" />`;
+  const input = wrap.querySelector("input");
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+
+  async function save() {
+    const newText = input.value.trim();
+    if (!newText) return;
+    try {
+      await api(`/api/messages/${msg.id}`, { method: "PATCH", body: JSON.stringify({ text: newText }) });
+    } catch (err) {
+      alert(err.message);
+      wrap.innerHTML = original;
+    }
+  }
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") save();
+    if (e.key === "Escape") wrap.innerHTML = original;
+  });
+  input.addEventListener("blur", save);
+}
+
+// ---------- Excluir mensagem ----------
+async function deleteMessage(messageId) {
+  if (!confirm("Excluir essa mensagem?")) return;
+  try {
+    await api(`/api/messages/${messageId}`, { method: "DELETE" });
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+// ---------- Encaminhar mensagem ----------
+async function openForwardModal(msg) {
+  forwardingMessage = msg;
+  forwardModalStatus.textContent = "";
+  forwardTargetsList.innerHTML = "Carregando...";
+  forwardModal.classList.remove("hidden");
+
+  const targets = [];
+  for (const server of myServers) {
+    for (const channel of server.channels) {
+      targets.push({ label: `${server.name} / #${channel.name}`, channelId: channel.id });
+    }
+  }
+  try {
+    const data = await api("/api/friends");
+    for (const friend of data.friends) {
+      targets.push({ label: `DM: ${friend.username}`, friend });
+    }
+  } catch {}
+
+  forwardTargetsList.innerHTML = "";
+  if (targets.length === 0) {
+    forwardTargetsList.innerHTML = '<p class="friends-empty">Nenhum destino disponível.</p>';
+    return;
+  }
+  for (const target of targets) {
+    const item = document.createElement("div");
+    item.className = "forward-target-item";
+    item.textContent = target.label;
+    item.addEventListener("click", () => forwardMessageTo(target));
+    forwardTargetsList.appendChild(item);
+  }
+}
+
+async function forwardMessageTo(target) {
+  forwardModalStatus.textContent = "Encaminhando...";
+  try {
+    let channelId = target.channelId;
+    if (!channelId && target.friend) {
+      const dm = await api(`/api/friends/${target.friend.id}/dm`, { method: "POST" });
+      channelId = dm.channelId;
+    }
+    await api(`/api/channels/${channelId}/forward`, {
+      method: "POST",
+      body: JSON.stringify({
+        text: forwardingMessage.text,
+        imageDataUrl: forwardingMessage.imageDataUrl,
+        audioDataUrl: forwardingMessage.audioDataUrl,
+      }),
+    });
+    forwardModalStatus.textContent = "Mensagem encaminhada!";
+    forwardModalStatus.style.color = "var(--success)";
+    setTimeout(() => forwardModal.classList.add("hidden"), 900);
+  } catch (err) {
+    forwardModalStatus.style.color = "var(--danger)";
+    forwardModalStatus.textContent = err.message;
+  }
+}
+
+forwardModalCancel.addEventListener("click", () => forwardModal.classList.add("hidden"));
 
 // ---------- Início ----------
 updateAuthUI();
