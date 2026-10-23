@@ -5,7 +5,16 @@ const path = require("path");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const { OAuth2Client } = require("google-auth-library");
-const { loadDB, saveDB } = require("./db");
+const {
+  loadDB,
+  saveDB,
+  insertMessage,
+  getMessage,
+  getChannelMessages,
+  updateMessage,
+  deleteMessageById,
+  deleteChannelMessages,
+} = require("./db");
 
 const GOOGLE_CLIENT_ID = "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
@@ -17,7 +26,6 @@ async function startServer(port = 3000) {
   db.users = db.users || [];
   db.servers = db.servers || [];
   db.channels = db.channels || [];
-  db.messages = db.messages || [];
   db.friendRequests = db.friendRequests || [];
   db.categories = db.categories || [];
   db.dmChannels = db.dmChannels || [];
@@ -311,7 +319,9 @@ async function startServer(port = 3000) {
       return res.status(403).json({ error: "Só o dono do servidor pode excluir canais." });
     }
     db.channels = db.channels.filter((c) => c.id !== req.params.channelId);
-    db.messages = db.messages.filter((m) => m.channelId !== req.params.channelId);
+    deleteChannelMessages(req.params.channelId).catch((err) =>
+      console.error("Erro ao apagar mensagens do canal:", err.message)
+    );
     persist();
     res.json({ ok: true });
   });
@@ -453,53 +463,65 @@ async function startServer(port = 3000) {
     res.json({ channelId: dm.id, friend: friendUser ? publicUser(friendUser) : null });
   });
 
-  app.get("/api/channels/:channelId/messages", requireAuth, (req, res) => {
+  app.get("/api/channels/:channelId/messages", requireAuth, async (req, res) => {
     if (!channelIfMember(req.params.channelId, req.userId)) {
       return res.status(403).json({ error: "Você não tem acesso a esse canal." });
     }
-    const msgs = db.messages
-      .filter((m) => m.channelId === req.params.channelId)
-      .slice(-100); // só as últimas 100, pra não ficar pesado
-    res.json(msgs);
-  });
-
-  app.patch("/api/messages/:messageId", requireAuth, (req, res) => {
-    const message = db.messages.find((m) => m.id === req.params.messageId);
-    if (!message) return res.status(404).json({ error: "Mensagem não encontrada." });
-    if (message.userId !== req.userId) return res.status(403).json({ error: "Você só pode editar suas próprias mensagens." });
-
-    const { text } = req.body || {};
-    if (typeof text !== "string" || !text.trim()) {
-      return res.status(400).json({ error: "A mensagem não pode ficar vazia." });
+    try {
+      const msgs = await getChannelMessages(req.params.channelId, 100); // só as últimas 100
+      res.json(msgs);
+    } catch (err) {
+      console.error("Erro ao carregar mensagens:", err.message);
+      res.status(500).json({ error: "Não foi possível carregar as mensagens." });
     }
-    message.text = text.trim().slice(0, 2000);
-    message.editedAt = Date.now();
-    persist();
-
-    const subs = chatSubscribers.get(message.channelId);
-    if (subs) for (const peer of subs) send(peer, { type: "message-edited", message });
-    res.json(message);
   });
 
-  app.delete("/api/messages/:messageId", requireAuth, (req, res) => {
-    const message = db.messages.find((m) => m.id === req.params.messageId);
-    if (!message) return res.status(404).json({ error: "Mensagem não encontrada." });
-    if (message.userId !== req.userId) return res.status(403).json({ error: "Você só pode excluir suas próprias mensagens." });
+  app.patch("/api/messages/:messageId", requireAuth, async (req, res) => {
+    try {
+      const message = await getMessage(req.params.messageId);
+      if (!message) return res.status(404).json({ error: "Mensagem não encontrada." });
+      if (message.userId !== req.userId) return res.status(403).json({ error: "Você só pode editar suas próprias mensagens." });
 
-    db.messages = db.messages.filter((m) => m.id !== req.params.messageId);
-    persist();
+      const { text } = req.body || {};
+      if (typeof text !== "string" || !text.trim()) {
+        return res.status(400).json({ error: "A mensagem não pode ficar vazia." });
+      }
+      const fields = { text: text.trim().slice(0, 2000), editedAt: Date.now() };
+      await updateMessage(message.id, fields);
+      Object.assign(message, fields);
 
-    const subs = chatSubscribers.get(message.channelId);
-    if (subs) for (const peer of subs) send(peer, { type: "message-deleted", messageId: message.id, channelId: message.channelId });
-    res.json({ ok: true });
+      const subs = chatSubscribers.get(message.channelId);
+      if (subs) for (const peer of subs) send(peer, { type: "message-edited", message });
+      res.json(message);
+    } catch (err) {
+      console.error("Erro ao editar mensagem:", err.message);
+      res.status(500).json({ error: "Não foi possível editar a mensagem." });
+    }
   });
 
-  app.post("/api/channels/:channelId/forward", requireAuth, (req, res) => {
+  app.delete("/api/messages/:messageId", requireAuth, async (req, res) => {
+    try {
+      const message = await getMessage(req.params.messageId);
+      if (!message) return res.status(404).json({ error: "Mensagem não encontrada." });
+      if (message.userId !== req.userId) return res.status(403).json({ error: "Você só pode excluir suas próprias mensagens." });
+
+      await deleteMessageById(message.id);
+
+      const subs = chatSubscribers.get(message.channelId);
+      if (subs) for (const peer of subs) send(peer, { type: "message-deleted", messageId: message.id, channelId: message.channelId });
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Erro ao excluir mensagem:", err.message);
+      res.status(500).json({ error: "Não foi possível excluir a mensagem." });
+    }
+  });
+
+  app.post("/api/channels/:channelId/forward", requireAuth, async (req, res) => {
     if (!channelIfMember(req.params.channelId, req.userId)) {
       return res.status(403).json({ error: "Você não tem acesso a esse canal." });
     }
     const { text, imageDataUrl, audioDataUrl } = req.body || {};
-    const message = createChatMessage(req.params.channelId, req.userId, { text, imageDataUrl, audioDataUrl });
+    const message = await createChatMessage(req.params.channelId, req.userId, { text, imageDataUrl, audioDataUrl });
     if (!message) return res.status(400).json({ error: "Nada para encaminhar." });
     res.json(message);
   });
@@ -528,41 +550,56 @@ async function startServer(port = 3000) {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
   }
 
-  function createChatMessage(channelId, userId, { text, imageDataUrl, audioDataUrl, replyToId }) {
-    const cleanText = (text || "").trim().slice(0, 2000);
-    let cleanImage = null;
-    if (typeof imageDataUrl === "string" && imageDataUrl.startsWith("data:image/")) cleanImage = imageDataUrl;
-    let cleanAudio = null;
-    if (typeof audioDataUrl === "string" && audioDataUrl.startsWith("data:audio/")) cleanAudio = audioDataUrl;
-    if (!cleanText && !cleanImage && !cleanAudio) return null;
+  // Horário sempre crescente: duas mensagens no mesmo milissegundo não podem
+  // trocar de ordem quando o histórico for carregado.
+  let lastMessageTime = 0;
+  function nextMessageTime() {
+    lastMessageTime = Math.max(Date.now(), lastMessageTime + 1);
+    return lastMessageTime;
+  }
 
-    let replyTo = null;
-    if (replyToId) {
-      const original = db.messages.find((m) => m.id === replyToId);
-      if (original) replyTo = { id: original.id, username: original.username, text: original.text.slice(0, 120) };
+  async function createChatMessage(channelId, userId, { text, imageDataUrl, audioDataUrl, replyToId }) {
+    try {
+      const cleanText = (text || "").trim().slice(0, 2000);
+      let cleanImage = null;
+      if (typeof imageDataUrl === "string" && imageDataUrl.startsWith("data:image/")) cleanImage = imageDataUrl;
+      let cleanAudio = null;
+      if (typeof audioDataUrl === "string" && audioDataUrl.startsWith("data:audio/")) cleanAudio = audioDataUrl;
+      if (!cleanText && !cleanImage && !cleanAudio) return null;
+
+      let replyTo = null;
+      if (replyToId) {
+        const original = await getMessage(replyToId);
+        if (original) replyTo = { id: original.id, username: original.username, text: (original.text || "").slice(0, 120) };
+      }
+
+      const author = db.users.find((u) => u.id === userId);
+      const message = {
+        id: crypto.randomUUID(),
+        channelId,
+        userId,
+        username: author ? author.username : "?",
+        avatarDataUrl: author ? author.avatarDataUrl || author.googlePicture || null : null,
+        text: cleanText,
+        imageDataUrl: cleanImage,
+        audioDataUrl: cleanAudio,
+        replyTo,
+        createdAt: nextMessageTime(),
+      };
+
+      // Salva ANTES de avisar os outros: se não salvou, a mensagem não é mostrada
+      // como se tivesse sido enviada (assim ninguém acha que foi salva e não foi).
+      await insertMessage(message);
+
+      const subs = chatSubscribers.get(channelId);
+      if (subs) {
+        for (const peer of subs) send(peer, { type: "chat-message", message });
+      }
+      return message;
+    } catch (err) {
+      console.error("Erro ao salvar mensagem:", err.message);
+      return null;
     }
-
-    const author = db.users.find((u) => u.id === userId);
-    const message = {
-      id: crypto.randomUUID(),
-      channelId,
-      userId,
-      username: author ? author.username : "?",
-      avatarDataUrl: author ? author.avatarDataUrl || null : null,
-      text: cleanText,
-      imageDataUrl: cleanImage,
-      audioDataUrl: cleanAudio,
-      replyTo,
-      createdAt: Date.now(),
-    };
-    db.messages.push(message);
-    persist();
-
-    const subs = chatSubscribers.get(channelId);
-    if (subs) {
-      for (const peer of subs) send(peer, { type: "chat-message", message });
-    }
-    return message;
   }
 
   wss.on("connection", (ws, req) => {
