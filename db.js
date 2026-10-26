@@ -6,6 +6,8 @@
 //   numa coleção separada, uma mensagem por registro. Assim não existe mais
 //   o limite de 16 MB do documento único, e salvar uma mensagem nova não
 //   precisa reescrever o banco inteiro.
+// - VÍDEOS ficam numa terceira coleção ("media"), separados das mensagens. A
+//   mensagem guarda só o id do vídeo, então abrir um canal não baixa vídeo nenhum.
 
 const { MongoClient } = require("mongodb");
 
@@ -36,6 +38,10 @@ async function stateCollection() {
 
 async function messagesCollection() {
   return (await getDb()).collection("messages");
+}
+
+async function mediaCollection() {
+  return (await getDb()).collection("media");
 }
 
 function stripId(doc) {
@@ -114,9 +120,48 @@ async function deleteMessageById(id) {
   await col.deleteOne({ _id: id });
 }
 
+// Apaga as mensagens do canal e devolve os ids de vídeo que elas usavam
+// (pra quem chamou limpar os vídeos que ficaram sem uso).
 async function deleteChannelMessages(channelId) {
   const col = await messagesCollection();
+  const videoIds = (await col.distinct("videoId", { channelId })).filter(Boolean);
   await col.deleteMany({ channelId });
+  return videoIds;
+}
+
+// ---------- Vídeos ----------
+
+async function insertMedia({ id, ownerId, channelId, contentType, size, dataB64 }) {
+  const col = await mediaCollection();
+  await col.insertOne({ _id: id, ownerId, channelIds: [channelId], contentType, size, dataB64, createdAt: Date.now() });
+}
+
+// Só os dados "leves" (sem o arquivo), pra checar permissão sem carregar o vídeo.
+async function getMediaMeta(id) {
+  const col = await mediaCollection();
+  return stripId(await col.findOne({ _id: id }, { projection: { dataB64: 0 } }));
+}
+
+async function getMediaData(id) {
+  const col = await mediaCollection();
+  const doc = await col.findOne({ _id: id });
+  if (!doc) return null;
+  const { dataB64, ...meta } = stripId(doc);
+  return { ...meta, buffer: Buffer.from(dataB64, "base64") };
+}
+
+// O mesmo vídeo pode aparecer em mais de um canal (quando é encaminhado).
+async function addMediaChannel(id, channelId) {
+  const col = await mediaCollection();
+  await col.updateOne({ _id: id }, { $addToSet: { channelIds: channelId } });
+}
+
+async function deleteMediaIfUnused(id) {
+  const messages = await messagesCollection();
+  if ((await messages.countDocuments({ videoId: id })) === 0) {
+    const col = await mediaCollection();
+    await col.deleteOne({ _id: id });
+  }
 }
 
 module.exports = {
@@ -128,4 +173,9 @@ module.exports = {
   updateMessage,
   deleteMessageById,
   deleteChannelMessages,
+  insertMedia,
+  getMediaMeta,
+  getMediaData,
+  addMediaChannel,
+  deleteMediaIfUnused,
 };
