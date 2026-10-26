@@ -14,6 +14,11 @@ const {
   updateMessage,
   deleteMessageById,
   deleteChannelMessages,
+  insertMedia,
+  getMediaMeta,
+  getMediaData,
+  addMediaChannel,
+  deleteMediaIfUnused,
 } = require("./db");
 
 const GOOGLE_CLIENT_ID = "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
@@ -319,9 +324,11 @@ async function startServer(port = 3000) {
       return res.status(403).json({ error: "Só o dono do servidor pode excluir canais." });
     }
     db.channels = db.channels.filter((c) => c.id !== req.params.channelId);
-    deleteChannelMessages(req.params.channelId).catch((err) =>
-      console.error("Erro ao apagar mensagens do canal:", err.message)
-    );
+    deleteChannelMessages(req.params.channelId)
+      .then(async (videoIds) => {
+        for (const id of videoIds) await deleteMediaIfUnused(id);
+      })
+      .catch((err) => console.error("Erro ao apagar mensagens do canal:", err.message));
     persist();
     res.json({ ok: true });
   });
@@ -506,6 +513,9 @@ async function startServer(port = 3000) {
       if (message.userId !== req.userId) return res.status(403).json({ error: "Você só pode excluir suas próprias mensagens." });
 
       await deleteMessageById(message.id);
+      if (message.videoId) {
+        deleteMediaIfUnused(message.videoId).catch((err) => console.error("Erro ao limpar vídeo:", err.message));
+      }
 
       const subs = chatSubscribers.get(message.channelId);
       if (subs) for (const peer of subs) send(peer, { type: "message-deleted", messageId: message.id, channelId: message.channelId });
@@ -520,10 +530,108 @@ async function startServer(port = 3000) {
     if (!channelIfMember(req.params.channelId, req.userId)) {
       return res.status(403).json({ error: "Você não tem acesso a esse canal." });
     }
-    const { text, imageDataUrl, audioDataUrl } = req.body || {};
-    const message = await createChatMessage(req.params.channelId, req.userId, { text, imageDataUrl, audioDataUrl });
+    const { text, imageDataUrl, audioDataUrl, videoId } = req.body || {};
+    const message = await createChatMessage(req.params.channelId, req.userId, { text, imageDataUrl, audioDataUrl, videoId });
     if (!message) return res.status(400).json({ error: "Nada para encaminhar." });
     res.json(message);
+  });
+
+  // ---------- Vídeos ----------
+  // O vídeo é enviado antes (aqui) e a mensagem leva só o id dele. Fica guardado
+  // no MongoDB (limite de 10 MB por vídeo, porque o plano grátis tem pouco espaço).
+
+  const MAX_VIDEO_BYTES = 10 * 1024 * 1024;
+  const ALLOWED_VIDEO_TYPES = /^video\/(mp4|webm|quicktime|ogg)$/;
+
+  app.post(
+    "/api/channels/:channelId/media",
+    requireAuth, // confere o login ANTES de receber o arquivo
+    express.raw({ type: () => true, limit: MAX_VIDEO_BYTES }),
+    async (req, res) => {
+      if (!channelIfMember(req.params.channelId, req.userId)) {
+        return res.status(403).json({ error: "Você não tem acesso a esse canal." });
+      }
+      const contentType = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+      if (!ALLOWED_VIDEO_TYPES.test(contentType)) {
+        return res.status(400).json({ error: "Formato de vídeo não suportado. Use MP4 ou WebM." });
+      }
+      const body = req.body;
+      if (!Buffer.isBuffer(body) || body.length === 0) {
+        return res.status(400).json({ error: "O vídeo está vazio." });
+      }
+      if (body.length > MAX_VIDEO_BYTES) {
+        return res.status(413).json({ error: "Vídeo grande demais (limite: 10 MB)." });
+      }
+      try {
+        const id = crypto.randomUUID();
+        await insertMedia({
+          id,
+          ownerId: req.userId,
+          channelId: req.params.channelId,
+          contentType,
+          size: body.length,
+          dataB64: body.toString("base64"),
+        });
+        res.json({ videoId: id, size: body.length });
+      } catch (err) {
+        console.error("Erro ao salvar vídeo:", err.message);
+        res.status(500).json({ error: "Não foi possível salvar o vídeo." });
+      }
+    }
+  );
+
+  // "Range" é o que deixa o player avançar/voltar o vídeo sem baixar tudo de novo.
+  function parseRange(header, size) {
+    const m = /^bytes=(\d*)-(\d*)$/.exec(header || "");
+    if (!m || (m[1] === "" && m[2] === "")) return null;
+    let start;
+    let end;
+    if (m[1] === "") {
+      start = Math.max(size - parseInt(m[2], 10), 0);
+      end = size - 1;
+    } else {
+      start = parseInt(m[1], 10);
+      end = m[2] === "" ? size - 1 : Math.min(parseInt(m[2], 10), size - 1);
+    }
+    if (start > end || start >= size) return "invalid";
+    return { start, end };
+  }
+
+  // O <video> do navegador não consegue mandar o cabeçalho de login, por isso
+  // esta rota também aceita o token na URL (?token=...).
+  app.get("/api/media/:mediaId", async (req, res) => {
+    const token = (req.headers.authorization || "").replace("Bearer ", "") || (req.query && req.query.token) || "";
+    const userId = sessions.get(token);
+    if (!userId) return res.status(401).json({ error: "Não autenticado." });
+    try {
+      const media = await getMediaData(req.params.mediaId);
+      if (!media) return res.status(404).json({ error: "Vídeo não encontrado." });
+      if (!media.channelIds.some((cid) => channelIfMember(cid, userId))) {
+        return res.status(403).json({ error: "Você não tem acesso a esse vídeo." });
+      }
+
+      const size = media.buffer.length;
+      res.setHeader("Content-Type", media.contentType);
+      res.setHeader("Accept-Ranges", "bytes");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Cache-Control", "private, max-age=3600");
+
+      const range = parseRange(req.headers.range, size);
+      if (range === "invalid") {
+        res.setHeader("Content-Range", `bytes */${size}`);
+        return res.status(416).end();
+      }
+      if (range) {
+        res.setHeader("Content-Range", `bytes ${range.start}-${range.end}/${size}`);
+        res.setHeader("Content-Length", String(range.end - range.start + 1));
+        return res.status(206).end(media.buffer.subarray(range.start, range.end + 1));
+      }
+      res.setHeader("Content-Length", String(size));
+      res.status(200).end(media.buffer);
+    } catch (err) {
+      console.error("Erro ao carregar vídeo:", err.message);
+      res.status(500).json({ error: "Não foi possível carregar o vídeo." });
+    }
   });
 
   // ---------- WebSocket: chat em tempo real + sinalização WebRTC ----------
@@ -537,7 +645,10 @@ async function startServer(port = 3000) {
   // uma mensagem decente em vez de travar/mostrar erro genérico.
   app.use((err, req, res, next) => {
     console.error("Erro não tratado:", err);
-    res.status(500).json({ error: "Algo deu errado no servidor. Tenta de novo." });
+    const status = err.status || err.statusCode || 500;
+    res.status(status).json({
+      error: status === 413 ? "Arquivo grande demais." : "Algo deu errado no servidor. Tenta de novo.",
+    });
   });
 
   const server = http.createServer(app);
@@ -558,14 +669,22 @@ async function startServer(port = 3000) {
     return lastMessageTime;
   }
 
-  async function createChatMessage(channelId, userId, { text, imageDataUrl, audioDataUrl, replyToId }) {
+  async function createChatMessage(channelId, userId, { text, imageDataUrl, audioDataUrl, videoId, replyToId }) {
     try {
       const cleanText = (text || "").trim().slice(0, 2000);
       let cleanImage = null;
       if (typeof imageDataUrl === "string" && imageDataUrl.startsWith("data:image/")) cleanImage = imageDataUrl;
       let cleanAudio = null;
       if (typeof audioDataUrl === "string" && audioDataUrl.startsWith("data:audio/")) cleanAudio = audioDataUrl;
-      if (!cleanText && !cleanImage && !cleanAudio) return null;
+
+      // vídeo: só vale se existe e quem manda tem acesso a ele (ou foi quem enviou, ou
+      // está encaminhando de um canal do qual participa)
+      let cleanVideoId = null;
+      if (typeof videoId === "string" && videoId) {
+        const meta = await getMediaMeta(videoId);
+        if (meta && meta.channelIds.some((cid) => channelIfMember(cid, userId))) cleanVideoId = videoId;
+      }
+      if (!cleanText && !cleanImage && !cleanAudio && !cleanVideoId) return null;
 
       let replyTo = null;
       if (replyToId) {
@@ -583,12 +702,14 @@ async function startServer(port = 3000) {
         text: cleanText,
         imageDataUrl: cleanImage,
         audioDataUrl: cleanAudio,
+        videoId: cleanVideoId,
         replyTo,
         createdAt: nextMessageTime(),
       };
 
       // Salva ANTES de avisar os outros: se não salvou, a mensagem não é mostrada
       // como se tivesse sido enviada (assim ninguém acha que foi salva e não foi).
+      if (cleanVideoId) await addMediaChannel(cleanVideoId, channelId); // libera o vídeo pra quem está nesse canal
       await insertMessage(message);
 
       const subs = chatSubscribers.get(channelId);
