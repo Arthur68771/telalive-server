@@ -516,10 +516,11 @@ function appendChatMessage(msg) {
       </div>
       ${msg.imageDataUrl ? `<img class="chat-msg-image" src="${msg.imageDataUrl}" alt="imagem" />` : ""}
       ${msg.audioDataUrl ? `<audio class="chat-msg-audio" controls src="${msg.audioDataUrl}"></audio>` : ""}
+      ${msg.videoId ? `<video class="chat-msg-video" controls preload="metadata" src="/api/media/${encodeURIComponent(msg.videoId)}?token=${encodeURIComponent(token)}"></video>` : ""}
     </div>
   `;
   if (msg.imageDataUrl) {
-    el.querySelector(".chat-msg-image").addEventListener("click", () => window.open(msg.imageDataUrl, "_blank"));
+    el.querySelector(".chat-msg-image").addEventListener("click", () => openLightbox(msg.imageDataUrl));
   }
   el.querySelector('[data-action="reply"]').addEventListener("click", () => setReplyState(msg));
   el.querySelector('[data-action="forward"]').addEventListener("click", () => openForwardModal(msg));
@@ -532,21 +533,125 @@ function appendChatMessage(msg) {
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 }
 
-function sendChatMessage() {
+// ---------- Visualizador de foto (fundo escuro) ----------
+const lightbox = document.getElementById("lightbox");
+const lightboxImg = document.getElementById("lightbox-img");
+const lightboxClose = document.getElementById("lightbox-close");
+
+function openLightbox(src) {
+  lightboxImg.src = src;
+  lightbox.classList.remove("hidden");
+}
+function closeLightbox() {
+  lightbox.classList.add("hidden");
+  lightboxImg.removeAttribute("src");
+}
+// clicar no fundo escuro (ou no X) fecha; clicar na própria foto não
+lightbox.addEventListener("click", (e) => {
+  if (e.target !== lightboxImg) closeLightbox();
+});
+lightboxClose.addEventListener("click", closeLightbox);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !lightbox.classList.contains("hidden")) closeLightbox();
+});
+
+// ---------- Enviar vídeo no chat ----------
+const MAX_CHAT_VIDEO_BYTES = 10 * 1024 * 1024;
+const chatVideoPreview = document.getElementById("chat-video-preview");
+const chatVideoPreviewPlayer = document.getElementById("chat-video-preview-player");
+const chatVideoPreviewRemove = document.getElementById("chat-video-preview-remove");
+let pendingChatVideoFile = null;
+let pendingChatVideoObjectUrl = null;
+let sendingChatMessage = false;
+
+function clearPendingChatVideo() {
+  if (pendingChatVideoObjectUrl) URL.revokeObjectURL(pendingChatVideoObjectUrl);
+  pendingChatVideoObjectUrl = null;
+  pendingChatVideoFile = null;
+  chatVideoPreview.classList.add("hidden");
+  chatVideoPreviewPlayer.removeAttribute("src");
+  chatVideoPreviewPlayer.load();
+  chatImageInput.value = "";
+}
+
+// Recebe qualquer arquivo escolhido/colado: foto ou vídeo
+async function setPendingChatFile(file) {
+  if (!file) return;
+  if (file.type.startsWith("image/")) {
+    clearPendingChatVideo();
+    await setPendingChatImage(file);
+    return;
+  }
+  if (file.type.startsWith("video/")) {
+    if (file.size > MAX_CHAT_VIDEO_BYTES) {
+      alert(`Esse vídeo tem ${(file.size / 1024 / 1024).toFixed(1)} MB. O limite é 10 MB.`);
+      chatImageInput.value = "";
+      return;
+    }
+    clearPendingChatImage();
+    clearPendingChatVideo();
+    pendingChatVideoFile = file;
+    pendingChatVideoObjectUrl = URL.createObjectURL(file);
+    chatVideoPreviewPlayer.src = pendingChatVideoObjectUrl;
+    chatVideoPreview.classList.remove("hidden");
+    return;
+  }
+  alert("Formato não suportado. Envie uma imagem ou um vídeo (MP4 ou WebM).");
+  chatImageInput.value = "";
+}
+
+async function uploadChatVideo(file, channelId) {
+  const res = await fetch(`/api/channels/${channelId}/media`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": file.type },
+    body: file,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Não foi possível enviar o vídeo.");
+  return data.videoId;
+}
+
+async function sendChatMessage() {
   const text = chatInput.value.trim();
-  if ((!text && !pendingChatImageDataUrl && !pendingChatAudioDataUrl) || !ws || ws.readyState !== WebSocket.OPEN || !activeChannelId) return;
+  const channelId = activeChannelId;
+  const hasMedia = pendingChatImageDataUrl || pendingChatAudioDataUrl || pendingChatVideoFile;
+  if ((!text && !hasMedia) || !ws || ws.readyState !== WebSocket.OPEN || !channelId || sendingChatMessage) return;
+
+  let videoId;
+  if (pendingChatVideoFile) {
+    sendingChatMessage = true;
+    chatSendBtn.disabled = true;
+    chatSendBtn.textContent = "Enviando...";
+    try {
+      videoId = await uploadChatVideo(pendingChatVideoFile, channelId);
+    } catch (err) {
+      alert(err.message);
+      return;
+    } finally {
+      sendingChatMessage = false;
+      chatSendBtn.disabled = false;
+      chatSendBtn.textContent = "Enviar";
+    }
+    if (activeChannelId !== channelId || !ws || ws.readyState !== WebSocket.OPEN) {
+      alert("Você saiu do canal antes do vídeo terminar de enviar.");
+      return;
+    }
+  }
+
   ws.send(
     JSON.stringify({
       type: "chat-message",
-      channelId: activeChannelId,
+      channelId,
       text,
       imageDataUrl: pendingChatImageDataUrl || undefined,
       audioDataUrl: pendingChatAudioDataUrl || undefined,
+      videoId,
       replyToId: replyingToMessage?.id || undefined,
     })
   );
   chatInput.value = "";
   clearPendingChatImage();
+  clearPendingChatVideo();
   pendingChatAudioDataUrl = null;
   chatAudioPreview.classList.add("hidden");
   chatAudioPreviewPlayer.src = "";
@@ -574,8 +679,9 @@ function clearPendingChatImage() {
 }
 
 chatAttachBtn.addEventListener("click", () => chatImageInput.click());
-chatImageInput.addEventListener("change", () => setPendingChatImage(chatImageInput.files[0]));
+chatImageInput.addEventListener("change", () => setPendingChatFile(chatImageInput.files[0]));
 chatImagePreviewRemove.addEventListener("click", clearPendingChatImage);
+chatVideoPreviewRemove.addEventListener("click", clearPendingChatVideo);
 
 // ---------- Gravar e enviar áudio (tipo WhatsApp) ----------
 chatRecordBtn.addEventListener("click", async () => {
@@ -620,8 +726,8 @@ chatAudioPreviewRemove.addEventListener("click", () => {
 chatInput.addEventListener("paste", (e) => {
   const items = e.clipboardData?.items || [];
   for (const item of items) {
-    if (item.type.startsWith("image/")) {
-      setPendingChatImage(item.getAsFile());
+    if (item.type.startsWith("image/") || item.type.startsWith("video/")) {
+      setPendingChatFile(item.getAsFile());
       e.preventDefault();
       break;
     }
@@ -1662,7 +1768,7 @@ categoryModalConfirm.addEventListener("click", async () => {
 
 // ---------- Responder mensagem ----------
 function setReplyState(msg) {
-  replyingToMessage = { id: msg.id, username: msg.username, text: (msg.text || (msg.imageDataUrl ? "📷 imagem" : msg.audioDataUrl ? "🎤 áudio" : "")).slice(0, 80) };
+  replyingToMessage = { id: msg.id, username: msg.username, text: (msg.text || (msg.imageDataUrl ? "📷 imagem" : msg.videoId ? "🎬 vídeo" : msg.audioDataUrl ? "🎤 áudio" : "")).slice(0, 80) };
   replyBannerText.textContent = `Respondendo a ${msg.username}: ${replyingToMessage.text}`;
   replyBanner.classList.remove("hidden");
   chatInput.focus();
@@ -1759,6 +1865,7 @@ async function forwardMessageTo(target) {
         text: forwardingMessage.text,
         imageDataUrl: forwardingMessage.imageDataUrl,
         audioDataUrl: forwardingMessage.audioDataUrl,
+        videoId: forwardingMessage.videoId,
       }),
     });
     forwardModalStatus.textContent = "Mensagem encaminhada!";
