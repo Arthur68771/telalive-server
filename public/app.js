@@ -1,7 +1,3 @@
-// ---------- TESTE DE CACHE ----------
-console.log("✅ O NOVO APP.JS FOI CARREGADO COM SUCESSO!");
-alert("O novo app.js carregou! Se você viu isso, o cache foi limpo.");
-
 // ---------- Estado geral ----------
 let token = localStorage.getItem("telalive-token") || null;
 let currentUser = null;
@@ -98,7 +94,7 @@ const forwardModalStatus = document.getElementById("forward-modal-status");
 const forwardModalCancel = document.getElementById("forward-modal-cancel");
 let forwardingMessage = null;
 const mentionDropdown = document.getElementById("mention-dropdown");
-let cachedFriendsForMention = null; // Cache de amigos
+let cachedFriendsForMention = null;
 let mentionActiveIndex = 0;
 
 const serverModal = document.getElementById("server-modal");
@@ -359,7 +355,6 @@ async function enterApp() {
   updateProfileBtn();
   await loadServers();
   
-  // NOVO: Carrega os amigos logo que entra pra ter a lista pro "@" funcionar
   try {
     const data = await api("/api/friends");
     cachedFriendsForMention = data.friends;
@@ -543,19 +538,19 @@ async function loadMessageHistory(channelId) {
   }
 }
 
-// ---------- Checar destaque ----------
+// ---------- Checar destaque (listra amarela) ----------
 function shouldHighlightMessage(msg) {
   if (!currentUser) return false;
   if (msg.userId === currentUser.id) return false;
 
-  const rawText = (msg.text || "");
+  const rawText = (msg.text || "").toLowerCase();
 
   // 1) @everyone
-  if (rawText.toLowerCase().includes("@everyone")) return true;
+  if (rawText.includes("@everyone")) return true;
 
-  // 2) menção direta (aceita espaços e acentos)
-  const myUsername = currentUser.username || "";
-  if (myUsername && rawText.toLowerCase().includes(`@${myUsername.toLowerCase()}`)) return true;
+  // 2) menção direta ao nome (aceitando espaços)
+  const myUsername = (currentUser.username || "").toLowerCase();
+  if (myUsername && rawText.includes(`@${myUsername}`)) return true;
 
   // 3) resposta a mim
   if (msg.replyTo && msg.replyTo.username === currentUser.username) return true;
@@ -575,20 +570,14 @@ function appendChatMessage(msg) {
   el.className = "chat-msg" + (highlighted ? " mentioned" : "");
   el.dataset.messageId = msg.id;
   
-  // Formata o texto
   let formattedText = "";
   if (msg.text) {
     let html = escapeHtml(msg.text);
-    
-    // Substitui @everyone
     html = html.replace(/@everyone/gi, '<span class="chat-mention">@everyone</span>');
-    
-    // Substitui os nomes dos amigos
     if (cachedFriendsForMention) {
       cachedFriendsForMention.forEach(f => {
         const safeName = f.username.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`@${safeName}`, 'gi');
-        html = html.replace(regex, `<span class="chat-mention">@${f.username}</span>`);
+        html = html.replace(new RegExp(`@${safeName}`, 'gi'), `<span class="chat-mention">@${f.username}</span>`);
       });
     }
     formattedText = html;
@@ -626,11 +615,8 @@ function appendChatMessage(msg) {
     try {
       const friends = await api("/api/friends");
       const friend = friends.friends.find((f) => f.id === msg.userId);
-      if (friend) {
-        openUserCard(friend);
-      } else {
-        openUserCard({ id: msg.userId, username: msg.username, avatarDataUrl: msg.avatarDataUrl });
-      }
+      if (friend) openUserCard(friend);
+      else openUserCard({ id: msg.userId, username: msg.username, avatarDataUrl: msg.avatarDataUrl });
     } catch {
       openUserCard({ id: msg.userId, username: msg.username, avatarDataUrl: msg.avatarDataUrl });
     }
@@ -861,7 +847,6 @@ chatInput.addEventListener("paste", (e) => {
 
 // ---------- Menções com @ ----------
 async function getMentionOptions(query) {
-  // Se o cache tiver vazio ou não existir, a gente busca de novo
   if (!cachedFriendsForMention) {
     try {
       const data = await api("/api/friends");
@@ -873,7 +858,6 @@ async function getMentionOptions(query) {
   
   const options = [{ everyone: true, label: "everyone" }, ...cachedFriendsForMention.map((f) => ({ user: f }))];
   const q = (query || "").toLowerCase();
-  
   return options.filter((o) => {
     if (o.everyone) return "everyone".includes(q);
     return (o.user.username || "").toLowerCase().includes(q);
@@ -1702,7 +1686,7 @@ friendsBtn.addEventListener("click", () => {
 async function loadFriends() {
   try {
     const data = await api("/api/friends");
-    cachedFriendsForMention = data.friends; // Atualiza o cache
+    cachedFriendsForMention = data.friends; 
     renderFriends(data);
   } catch (err) {
     console.error(err);
