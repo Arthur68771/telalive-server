@@ -571,17 +571,18 @@ function clearPendingChatVideo() {
   chatVideoPreview.classList.add("hidden");
   chatVideoPreviewPlayer.removeAttribute("src");
   chatVideoPreviewPlayer.load();
-  chatImageInput.value = "";
 }
 
 // Recebe qualquer arquivo escolhido/colado: foto ou vídeo
 async function setPendingChatFile(file) {
   if (!file) return;
+
   if (file.type.startsWith("image/")) {
     clearPendingChatVideo();
     await setPendingChatImage(file);
     return;
   }
+
   if (file.type.startsWith("video/")) {
     if (file.size > MAX_CHAT_VIDEO_BYTES) {
       alert(`Esse vídeo tem ${(file.size / 1024 / 1024).toFixed(1)} MB. O limite é 10 MB.`);
@@ -589,13 +590,14 @@ async function setPendingChatFile(file) {
       return;
     }
     clearPendingChatImage();
-    clearPendingChatVideo();
+    if (pendingChatVideoObjectUrl) URL.revokeObjectURL(pendingChatVideoObjectUrl);
     pendingChatVideoFile = file;
     pendingChatVideoObjectUrl = URL.createObjectURL(file);
     chatVideoPreviewPlayer.src = pendingChatVideoObjectUrl;
     chatVideoPreview.classList.remove("hidden");
     return;
   }
+
   alert("Formato não suportado. Envie uma imagem ou um vídeo (MP4 ou WebM).");
   chatImageInput.value = "";
 }
@@ -626,16 +628,19 @@ async function sendChatMessage() {
       videoId = await uploadChatVideo(pendingChatVideoFile, channelId);
     } catch (err) {
       alert(err.message);
-      return;
-    } finally {
       sendingChatMessage = false;
       chatSendBtn.disabled = false;
       chatSendBtn.textContent = "Enviar";
-    }
-    if (activeChannelId !== channelId || !ws || ws.readyState !== WebSocket.OPEN) {
-      alert("Você saiu do canal antes do vídeo terminar de enviar.");
       return;
     }
+    sendingChatMessage = false;
+    chatSendBtn.disabled = false;
+    chatSendBtn.textContent = "Enviar";
+  }
+
+  if (activeChannelId !== channelId || !ws || ws.readyState !== WebSocket.OPEN) {
+    alert("Você saiu do canal antes do vídeo terminar de enviar.");
+    return;
   }
 
   ws.send(
@@ -649,9 +654,11 @@ async function sendChatMessage() {
       replyToId: replyingToMessage?.id || undefined,
     })
   );
+
   chatInput.value = "";
   clearPendingChatImage();
   clearPendingChatVideo();
+  chatImageInput.value = "";
   pendingChatAudioDataUrl = null;
   chatAudioPreview.classList.add("hidden");
   chatAudioPreviewPlayer.src = "";
@@ -681,7 +688,10 @@ function clearPendingChatImage() {
 chatAttachBtn.addEventListener("click", () => chatImageInput.click());
 chatImageInput.addEventListener("change", () => setPendingChatFile(chatImageInput.files[0]));
 chatImagePreviewRemove.addEventListener("click", clearPendingChatImage);
-chatVideoPreviewRemove.addEventListener("click", clearPendingChatVideo);
+chatVideoPreviewRemove.addEventListener("click", () => {
+  clearPendingChatVideo();
+  chatImageInput.value = "";
+});
 
 // ---------- Gravar e enviar áudio (tipo WhatsApp) ----------
 chatRecordBtn.addEventListener("click", async () => {
