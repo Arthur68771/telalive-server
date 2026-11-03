@@ -125,6 +125,12 @@ const profileModalCancel = document.getElementById("profile-modal-cancel");
 const profileModalConfirm = document.getElementById("profile-modal-confirm");
 const profileLogoutBtn = document.getElementById("profile-logout-btn");
 
+// NOVO: elementos do banner
+const profileBannerPreview = document.getElementById("profile-banner-preview");
+const profileBannerInput = document.getElementById("profile-banner-input");
+const profileBannerChooseBtn = document.getElementById("profile-banner-choose-btn");
+let pendingBannerDataUrl = null;
+
 const editServerIconBtn = document.getElementById("edit-server-icon-btn");
 const serverIconModal = document.getElementById("server-icon-modal");
 const serverIconPreview = document.getElementById("server-icon-preview");
@@ -175,7 +181,7 @@ let hideMutedChannels = localStorage.getItem("telalive-hide-muted") === "1";
 let pendingAvatarDataUrl = null;
 let pendingServerIconDataUrl = null;
 
-// ---------- Redimensionar imagem antes de enviar (fica pequena e leve) ----------
+// ---------- Redimensionar imagem antes de enviar ----------
 function resizeImageFile(file, maxSize = 160) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -533,7 +539,7 @@ function appendChatMessage(msg) {
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 }
 
-// ---------- Visualizador de foto (fundo escuro) ----------
+// ---------- Visualizador de foto ----------
 const lightbox = document.getElementById("lightbox");
 const lightboxImg = document.getElementById("lightbox-img");
 const lightboxClose = document.getElementById("lightbox-close");
@@ -546,7 +552,6 @@ function closeLightbox() {
   lightbox.classList.add("hidden");
   lightboxImg.removeAttribute("src");
 }
-// clicar no fundo escuro (ou no X) fecha; clicar na própria foto não
 lightbox.addEventListener("click", (e) => {
   if (e.target !== lightboxImg) closeLightbox();
 });
@@ -573,7 +578,6 @@ function clearPendingChatVideo() {
   chatVideoPreviewPlayer.load();
 }
 
-// Recebe qualquer arquivo escolhido/colado: foto ou vídeo
 async function setPendingChatFile(file) {
   if (!file) return;
 
@@ -670,7 +674,7 @@ chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && mentionDropdown.classList.contains("hidden")) sendChatMessage();
 });
 
-// ---------- Enviar imagem no chat (colar ou escolher arquivo) ----------
+// ---------- Enviar imagem no chat ----------
 async function setPendingChatImage(file) {
   if (!file || !file.type.startsWith("image/")) return;
   pendingChatImageDataUrl = await resizeImageKeepAspect(file, 640);
@@ -693,7 +697,7 @@ chatVideoPreviewRemove.addEventListener("click", () => {
   chatImageInput.value = "";
 });
 
-// ---------- Gravar e enviar áudio (tipo WhatsApp) ----------
+// ---------- Gravar e enviar áudio ----------
 chatRecordBtn.addEventListener("click", async () => {
   if (audioRecorder && audioRecorder.state === "recording") {
     audioRecorder.stop();
@@ -829,7 +833,7 @@ function highlightMentions(text) {
   return text.replace(/@(everyone|[a-zA-Z0-9_]{3,24})/g, '<span class="chat-mention">@$1</span>');
 }
 
-// ---------- WebSocket + WebRTC (suporta várias pessoas na mesma chamada) ----------
+// ---------- WebSocket + WebRTC ----------
 function connectToChannel(channelId) {
   const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${wsProtocol}://${location.host}?token=${encodeURIComponent(token)}`);
@@ -857,8 +861,6 @@ function connectToChannel(channelId) {
         playJoinSound();
         updateWaitingText();
         renderParticipantsBar();
-        // se eu já tiver microfone ou tela ativos, o recém-chegado
-        // também precisa receber - sincroniza minha mídia com ele
         await syncOutgoingTracksToPeer(msg.id);
         break;
       }
@@ -897,7 +899,6 @@ function connectToChannel(channelId) {
               console.error(err);
             }
           } else {
-            // ainda não temos a descrição remota - guarda pra aplicar depois
             if (!pendingIceCandidates.has(msg.from)) pendingIceCandidates.set(msg.from, []);
             pendingIceCandidates.get(msg.from).push(msg.candidate);
           }
@@ -1028,12 +1029,9 @@ function createPeerConnection(peerId, direction) {
       if (event.track.kind === "video") {
         showVideoTile(peerId, knownPeers.get(peerId)?.username || "Alguém", stream);
       } else if (event.track.kind === "audio" && stream.getVideoTracks().length === 0) {
-        // áudio "puro" (microfone) - toca escondido e liga o detector de fala
         playRemoteAudio(peerId, stream);
         setupSpeakingDetector(stream, peerId);
       }
-      // se o áudio vier junto com vídeo (ex: compartilhamento com som do
-      // sistema), o próprio elemento de vídeo já toca ele - não duplica.
     };
   }
 
@@ -1108,9 +1106,6 @@ function closePeerConnections(peerId) {
   }
 }
 
-// Garante que essa pessoa recebe TODA a minha mídia ativa no momento
-// (microfone e/ou tela). Reaproveita a mesma conexão pra tudo, e
-// renegocia (manda uma nova oferta) sempre que adiciona alguma faixa nova.
 async function syncOutgoingTracksToPeer(peerId) {
   let pc = pcsOut.get(peerId);
   if (!pc) {
@@ -1145,7 +1140,7 @@ async function syncOutgoingTracksToPeer(peerId) {
   }
 }
 
-// ---------- Detectar quem está falando (anel verde no avatar/vídeo) ----------
+// ---------- Detectar quem está falando ----------
 function setupSpeakingDetector(stream, key) {
   if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
   try {
@@ -1202,9 +1197,6 @@ async function ensureMicJoined() {
       },
     });
 
-    // Tenta melhorar ainda mais com redução de ruído por IA (só funciona
-    // em navegadores baseados em Chromium - Chrome, Edge, Brave). Se não
-    // der, usa o áudio normal mesmo (que já tem redução de ruído básica).
     if (window.Shiguredo) {
       try {
         const assetsPath = "https://cdn.jsdelivr.net/npm/@shiguredo/noise-suppression@latest/dist";
@@ -1436,24 +1428,43 @@ channelModalConfirm.addEventListener("click", async () => {
   }
 });
 
-// ---------- Modal: editar perfil ----------
+// ---------- Modal: editar perfil (COM BANNER) ----------
 const profileUsernameInput = document.getElementById("profile-username-input");
 
 profileBtn.addEventListener("click", () => {
   pendingAvatarDataUrl = null;
+  pendingBannerDataUrl = null; // NOVO
   profileModalStatus.textContent = "";
   profileAvatarPreview.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
+  // NOVO: preenche o banner
+  if (currentUser?.bannerDataUrl) {
+    profileBannerPreview.style.backgroundImage = `url(${currentUser.bannerDataUrl})`;
+    profileBannerPreview.innerHTML = "";
+  } else {
+    profileBannerPreview.style.backgroundImage = "";
+    profileBannerPreview.innerHTML = '<span style="color: var(--muted); font-size: 0.85rem;">Sem banner</span>';
+  }
   profileUsernameInput.value = currentUser?.username || "";
   profileModal.classList.remove("hidden");
 });
 
 profileAvatarChooseBtn.addEventListener("click", () => profileAvatarInput.click());
+profileBannerChooseBtn.addEventListener("click", () => profileBannerInput.click()); // NOVO
 
 profileAvatarInput.addEventListener("change", async () => {
   const file = profileAvatarInput.files[0];
   if (!file) return;
   pendingAvatarDataUrl = await resizeImageFile(file);
   profileAvatarPreview.innerHTML = `<img src="${pendingAvatarDataUrl}" alt="" />`;
+});
+
+// NOVO: redimensiona o banner (mais largo, 640px)
+profileBannerInput.addEventListener("change", async () => {
+  const file = profileBannerInput.files[0];
+  if (!file) return;
+  pendingBannerDataUrl = await resizeImageKeepAspect(file, 640);
+  profileBannerPreview.style.backgroundImage = `url(${pendingBannerDataUrl})`;
+  profileBannerPreview.innerHTML = "";
 });
 
 profileModalCancel.addEventListener("click", () => profileModal.classList.add("hidden"));
@@ -1477,6 +1488,7 @@ profileModalConfirm.addEventListener("click", async () => {
   const newUsername = profileUsernameInput.value.trim();
   const body = {};
   if (pendingAvatarDataUrl) body.avatarDataUrl = pendingAvatarDataUrl;
+  if (pendingBannerDataUrl) body.bannerDataUrl = pendingBannerDataUrl; // NOVO
   if (newUsername && newUsername !== currentUser?.username) body.username = newUsername;
 
   if (Object.keys(body).length === 0) {
@@ -1635,7 +1647,7 @@ async function respondFriendRequest(requestId, action) {
   }
 }
 
-// ---------- Menu de contexto do servidor (botão direito) ----------
+// ---------- Menu de contexto do servidor ----------
 function openServerContextMenu(serverId, x, y) {
   contextMenuServerId = serverId;
   ctxToggleMutedSwitch.classList.toggle("on", hideMutedChannels);
@@ -1718,7 +1730,7 @@ newCategoryPrivate.addEventListener("change", async () => {
     const members = await api(`/api/servers/${activeServerId}/members`);
     categoryMembersList.innerHTML = "";
     for (const member of members) {
-      if (member.id === currentUser.id) continue; // dono sempre vê, não precisa marcar
+      if (member.id === currentUser.id) continue;
       const row = document.createElement("label");
       row.className = "member-check-row";
       row.innerHTML = `
