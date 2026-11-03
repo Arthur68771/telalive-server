@@ -313,7 +313,7 @@
   }
   .chat-video-preview button:hover { background: var(--danger); color: white; }
 
-  /* ---------- Visualizador de foto (fundo escuro) ---------- */
+  /* ---------- Visualizador de foto ---------- */
   .lightbox {
     position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, 0.88);
     display: flex; align-items: center; justify-content: center; cursor: zoom-out;
@@ -358,6 +358,19 @@
     margin-bottom: 3px; padding-left: 10px; border-left: 2px solid var(--border);
   }
   .chat-msg { position: relative; }
+
+  /* NOVO: destaque amarelo de menção/respondido */
+  .chat-msg.mentioned {
+    background: rgba(250, 204, 21, 0.08);
+    border-left: 3px solid #facc15;
+    padding-left: 8px;
+    border-radius: 0 6px 6px 0;
+    margin-left: -3px;
+  }
+  .chat-msg.mentioned .chat-msg-author {
+    color: #facc15;
+  }
+
   .chat-msg-actions {
     display: none; position: absolute; top: -14px; right: 4px; background: var(--elevated);
     border: 1px solid var(--border); border-radius: 8px; padding: 2px; gap: 2px;
@@ -494,7 +507,7 @@
   }
   .channel-item-presence .mini-avatar img { width: 100%; height: 100%; object-fit: cover; }
 
-  /* ---------- NOVO: card de perfil (estilo Discord) ---------- */
+  /* ---------- Card de perfil ---------- */
   .profile-card {
     background: var(--panel); border-radius: 14px; overflow: hidden;
     width: 320px; max-width: 92vw; border: 1px solid var(--border);
@@ -780,7 +793,7 @@
   <div class="context-menu-item" id="item-ctx-delete" style="color: var(--danger);"><span>Excluir</span></div>
 </div>
 
-<!-- Modal: editar perfil (AGORA COM BIO E PRONOMES) -->
+<!-- Modal: editar perfil -->
 <div class="modal-backdrop hidden" id="profile-modal">
   <div class="modal">
     <h3>Editar perfil</h3>
@@ -814,7 +827,7 @@
   </div>
 </div>
 
-<!-- NOVO: card de perfil (abre ao clicar num avatar) -->
+<!-- Card de perfil -->
 <div class="modal-backdrop hidden" id="user-card-modal">
   <div class="profile-card" id="user-card">
     <div class="profile-card-banner" id="user-card-banner"></div>
