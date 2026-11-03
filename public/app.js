@@ -1,3 +1,7 @@
+// ---------- TESTE DE CACHE ----------
+console.log("✅ O NOVO APP.JS FOI CARREGADO COM SUCESSO!");
+alert("O novo app.js carregou! Se você viu isso, o cache foi limpo.");
+
 // ---------- Estado geral ----------
 let token = localStorage.getItem("telalive-token") || null;
 let currentUser = null;
@@ -94,7 +98,7 @@ const forwardModalStatus = document.getElementById("forward-modal-status");
 const forwardModalCancel = document.getElementById("forward-modal-cancel");
 let forwardingMessage = null;
 const mentionDropdown = document.getElementById("mention-dropdown");
-let cachedFriendsForMention = null;
+let cachedFriendsForMention = null; // Cache de amigos
 let mentionActiveIndex = 0;
 
 const serverModal = document.getElementById("server-modal");
@@ -354,6 +358,12 @@ async function enterApp() {
   appScreen.style.display = "flex";
   updateProfileBtn();
   await loadServers();
+  
+  // NOVO: Carrega os amigos logo que entra pra ter a lista pro "@" funcionar
+  try {
+    const data = await api("/api/friends");
+    cachedFriendsForMention = data.friends;
+  } catch {}
 }
 
 function updateProfileBtn() {
@@ -541,11 +551,11 @@ function shouldHighlightMessage(msg) {
   const rawText = (msg.text || "");
 
   // 1) @everyone
-  if (/@everyone\b/i.test(rawText)) return true;
+  if (rawText.toLowerCase().includes("@everyone")) return true;
 
   // 2) menção direta (aceita espaços e acentos)
   const myUsername = currentUser.username || "";
-  if (myUsername && rawText.includes(`@${myUsername}`)) return true;
+  if (myUsername && rawText.toLowerCase().includes(`@${myUsername.toLowerCase()}`)) return true;
 
   // 3) resposta a mim
   if (msg.replyTo && msg.replyTo.username === currentUser.username) return true;
@@ -565,18 +575,15 @@ function appendChatMessage(msg) {
   el.className = "chat-msg" + (highlighted ? " mentioned" : "");
   el.dataset.messageId = msg.id;
   
-  // Formata o texto com menções (também arrumado pra aceitar espaços no nome)
+  // Formata o texto
   let formattedText = "";
   if (msg.text) {
     let html = escapeHtml(msg.text);
     
     // Substitui @everyone
-    html = html.replace(/@everyone/g, '<span class="chat-mention">@everyone</span>');
+    html = html.replace(/@everyone/gi, '<span class="chat-mention">@everyone</span>');
     
-    // Substitui o nome do amigo (seja lá qual for o nome dele, com espaço e tal)
-    // Como não temos a lista de todos os usuários aqui, a gente faz uma regex que pega "@" seguido de texto até achar um espaço que NÃO seja de menção. 
-    // Pra facilitar, o destaque roxo agora só será aplicado se a string exata "@nome" estiver na mensagem.
-    // Mas o mais garantido pro visual: a gente varre a lista de amigos e substitui.
+    // Substitui os nomes dos amigos
     if (cachedFriendsForMention) {
       cachedFriendsForMention.forEach(f => {
         const safeName = f.username.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -852,8 +859,9 @@ chatInput.addEventListener("paste", (e) => {
   }
 });
 
-// ---------- Menções com @ (CORRIGIDO) ----------
+// ---------- Menções com @ ----------
 async function getMentionOptions(query) {
+  // Se o cache tiver vazio ou não existir, a gente busca de novo
   if (!cachedFriendsForMention) {
     try {
       const data = await api("/api/friends");
@@ -862,8 +870,10 @@ async function getMentionOptions(query) {
       cachedFriendsForMention = [];
     }
   }
+  
   const options = [{ everyone: true, label: "everyone" }, ...cachedFriendsForMention.map((f) => ({ user: f }))];
   const q = (query || "").toLowerCase();
+  
   return options.filter((o) => {
     if (o.everyone) return "everyone".includes(q);
     return (o.user.username || "").toLowerCase().includes(q);
@@ -873,7 +883,6 @@ async function getMentionOptions(query) {
 function getMentionQuery() {
   const cursor = chatInput.selectionStart;
   const textBefore = chatInput.value.slice(0, cursor);
-  // Regex pra capturar o @ e tudo até o cursor (aceitando acentos, letras, números e espaço)
   const match = textBefore.match(/(?:^|\s)@([^@]*)$/);
   return match ? match[1] : null;
 }
@@ -884,11 +893,14 @@ async function updateMentionDropdown() {
     mentionDropdown.classList.add("hidden");
     return;
   }
+  
   const options = await getMentionOptions(query);
+  
   if (options.length === 0) {
     mentionDropdown.classList.add("hidden");
     return;
   }
+  
   mentionActiveIndex = 0;
   mentionDropdown.innerHTML = "";
   options.forEach((opt, i) => {
@@ -910,7 +922,6 @@ function applyMention(opt) {
   const cursor = chatInput.selectionStart;
   const textBefore = chatInput.value.slice(0, cursor);
   const textAfter = chatInput.value.slice(cursor);
-  // Substitui tudo desde o último @ até o cursor
   const newBefore = textBefore.replace(/@[^@]*$/, `@${name} `);
   chatInput.value = newBefore + textAfter;
   mentionDropdown.classList.add("hidden");
@@ -1037,9 +1048,8 @@ function connectToChannel(channelId) {
         const el = chatMessagesEl.querySelector(`[data-message-id="${msg.message.id}"]`);
         if (el) {
           const wrap = el.querySelector(".chat-msg-text-wrap");
-          // Reaplica o formatador do texto com a menção
           let formatted = escapeHtml(msg.message.text);
-          formatted = formatted.replace(/@everyone/g, '<span class="chat-mention">@everyone</span>');
+          formatted = formatted.replace(/@everyone/gi, '<span class="chat-mention">@everyone</span>');
           if (cachedFriendsForMention) {
             cachedFriendsForMention.forEach(f => {
               const safeName = f.username.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -1692,6 +1702,7 @@ friendsBtn.addEventListener("click", () => {
 async function loadFriends() {
   try {
     const data = await api("/api/friends");
+    cachedFriendsForMention = data.friends; // Atualiza o cache
     renderFriends(data);
   } catch (err) {
     console.error(err);
