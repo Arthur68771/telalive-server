@@ -533,24 +533,21 @@ async function loadMessageHistory(channelId) {
   }
 }
 
-// ---------- Checar destaque (agora mais robusto) ----------
+// ---------- Checar destaque ----------
 function shouldHighlightMessage(msg) {
   if (!currentUser) return false;
-  if (msg.userId === currentUser.id) return false; // não destaca próprias mensagens
+  if (msg.userId === currentUser.id) return false;
 
   const rawText = (msg.text || "");
 
-  // 1) @everyone → destaca pra todos (case-insensitive, aceita espaços)
-  if (/@everyone/i.test(rawText)) return true;
+  // 1) @everyone
+  if (/@everyone\b/i.test(rawText)) return true;
 
-  // 2) menção direta ao meu username (case-insensitive, aceita acentos)
-  const myUsername = (currentUser.username || "").toLowerCase();
-  if (myUsername) {
-    const lowerText = rawText.toLowerCase();
-    if (lowerText.includes(`@${myUsername}`)) return true;
-  }
+  // 2) menção direta (aceita espaços e acentos)
+  const myUsername = currentUser.username || "";
+  if (myUsername && rawText.includes(`@${myUsername}`)) return true;
 
-  // 3) é resposta a uma mensagem minha
+  // 3) resposta a mim
   if (msg.replyTo && msg.replyTo.username === currentUser.username) return true;
 
   return false;
@@ -567,6 +564,29 @@ function appendChatMessage(msg) {
   const el = document.createElement("div");
   el.className = "chat-msg" + (highlighted ? " mentioned" : "");
   el.dataset.messageId = msg.id;
+  
+  // Formata o texto com menções (também arrumado pra aceitar espaços no nome)
+  let formattedText = "";
+  if (msg.text) {
+    let html = escapeHtml(msg.text);
+    
+    // Substitui @everyone
+    html = html.replace(/@everyone/g, '<span class="chat-mention">@everyone</span>');
+    
+    // Substitui o nome do amigo (seja lá qual for o nome dele, com espaço e tal)
+    // Como não temos a lista de todos os usuários aqui, a gente faz uma regex que pega "@" seguido de texto até achar um espaço que NÃO seja de menção. 
+    // Pra facilitar, o destaque roxo agora só será aplicado se a string exata "@nome" estiver na mensagem.
+    // Mas o mais garantido pro visual: a gente varre a lista de amigos e substitui.
+    if (cachedFriendsForMention) {
+      cachedFriendsForMention.forEach(f => {
+        const safeName = f.username.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`@${safeName}`, 'gi');
+        html = html.replace(regex, `<span class="chat-mention">@${f.username}</span>`);
+      });
+    }
+    formattedText = html;
+  }
+
   el.innerHTML = `
     <div class="chat-msg-actions">
       <button class="chat-msg-action-btn" data-action="reply" title="Responder">↩️</button>
@@ -583,7 +603,7 @@ function appendChatMessage(msg) {
       </div>
       ${msg.replyTo ? `<div class="chat-msg-reply-quote">↪ ${escapeHtml(msg.replyTo.username)}: ${escapeHtml(msg.replyTo.text)}</div>` : ""}
       <div class="chat-msg-text-wrap">
-        ${msg.text ? `<div class="chat-msg-text">${highlightMentions(escapeHtml(msg.text))}</div>` : ""}
+        ${msg.text ? `<div class="chat-msg-text">${formattedText}</div>` : ""}
       </div>
       ${msg.imageDataUrl ? `<img class="chat-msg-image" src="${msg.imageDataUrl}" alt="imagem" />` : ""}
       ${msg.audioDataUrl ? `<audio class="chat-msg-audio" controls src="${msg.audioDataUrl}"></audio>` : ""}
@@ -844,7 +864,6 @@ async function getMentionOptions(query) {
   }
   const options = [{ everyone: true, label: "everyone" }, ...cachedFriendsForMention.map((f) => ({ user: f }))];
   const q = (query || "").toLowerCase();
-  // filtra: everyone ou username que começa/inclui a query
   return options.filter((o) => {
     if (o.everyone) return "everyone".includes(q);
     return (o.user.username || "").toLowerCase().includes(q);
@@ -854,8 +873,8 @@ async function getMentionOptions(query) {
 function getMentionQuery() {
   const cursor = chatInput.selectionStart;
   const textBefore = chatInput.value.slice(0, cursor);
-  // captura @ seguido de letras/números/underscore até o cursor
-  const match = textBefore.match(/(?:^|\s)@([a-zA-Z0-9_]*)$/);
+  // Regex pra capturar o @ e tudo até o cursor (aceitando acentos, letras, números e espaço)
+  const match = textBefore.match(/(?:^|\s)@([^@]*)$/);
   return match ? match[1] : null;
 }
 
@@ -891,16 +910,15 @@ function applyMention(opt) {
   const cursor = chatInput.selectionStart;
   const textBefore = chatInput.value.slice(0, cursor);
   const textAfter = chatInput.value.slice(cursor);
-  const newBefore = textBefore.replace(/@([a-zA-Z0-9_]*)$/, `@${name} `);
+  // Substitui tudo desde o último @ até o cursor
+  const newBefore = textBefore.replace(/@[^@]*$/, `@${name} `);
   chatInput.value = newBefore + textAfter;
   mentionDropdown.classList.add("hidden");
   chatInput.focus();
 }
 
-// Chama updateMentionDropdown a cada input
 chatInput.addEventListener("input", updateMentionDropdown);
 
-// Navegação por teclado no dropdown
 chatInput.addEventListener("keydown", (e) => {
   if (mentionDropdown.classList.contains("hidden")) return;
   const items = [...mentionDropdown.children];
@@ -920,10 +938,6 @@ chatInput.addEventListener("keydown", (e) => {
     mentionDropdown.classList.add("hidden");
   }
 });
-
-function highlightMentions(text) {
-  return text.replace(/@(everyone|[a-zA-Z0-9_]{3,24})/g, '<span class="chat-mention">@$1</span>');
-}
 
 // ---------- WebSocket + WebRTC ----------
 function connectToChannel(channelId) {
@@ -1023,11 +1037,20 @@ function connectToChannel(channelId) {
         const el = chatMessagesEl.querySelector(`[data-message-id="${msg.message.id}"]`);
         if (el) {
           const wrap = el.querySelector(".chat-msg-text-wrap");
-          wrap.innerHTML = `<div class="chat-msg-text">${highlightMentions(escapeHtml(msg.message.text))}</div>`;
+          // Reaplica o formatador do texto com a menção
+          let formatted = escapeHtml(msg.message.text);
+          formatted = formatted.replace(/@everyone/g, '<span class="chat-mention">@everyone</span>');
+          if (cachedFriendsForMention) {
+            cachedFriendsForMention.forEach(f => {
+              const safeName = f.username.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+              formatted = formatted.replace(new RegExp(`@${safeName}`, 'gi'), `<span class="chat-mention">@${f.username}</span>`);
+            });
+          }
+          wrap.innerHTML = `<div class="chat-msg-text">${formatted}</div>`;
+          
           if (!el.querySelector(".chat-msg-edited-tag")) {
             el.querySelector(".chat-msg-time").insertAdjacentHTML("afterend", '<span class="chat-msg-edited-tag">(editado)</span>');
           }
-          // recalcula a listra amarela depois de editar
           el.classList.toggle("mentioned", shouldHighlightMessage(msg.message));
         }
         break;
