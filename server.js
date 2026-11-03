@@ -26,8 +26,6 @@ const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 async function startServer(port = 3000) {
   const db = await loadDB();
-  // proteção extra: garante que essas listas sempre existem, mesmo que
-  // os dados salvos sejam de uma versão mais antiga do app
   db.users = db.users || [];
   db.servers = db.servers || [];
   db.channels = db.channels || [];
@@ -39,8 +37,6 @@ async function startServer(port = 3000) {
     saveDB(db).catch((err) => console.error("Erro ao salvar no banco:", err.message));
   }
 
-  // token -> userId (fica só na memória; ao reiniciar o servidor, todo
-  // mundo precisa logar de novo - da pra evoluir isso depois)
   const sessions = new Map();
 
   const app = express();
@@ -59,7 +55,12 @@ async function startServer(port = 3000) {
   }
 
   function publicUser(user) {
-    return { id: user.id, username: user.username, avatarDataUrl: user.avatarDataUrl || user.googlePicture || null };
+    return {
+      id: user.id,
+      username: user.username,
+      avatarDataUrl: user.avatarDataUrl || user.googlePicture || null,
+      bannerDataUrl: user.bannerDataUrl || null, // NOVO CAMPO
+    };
   }
 
   function uniqueUsernameFrom(base) {
@@ -145,7 +146,7 @@ async function startServer(port = 3000) {
 
   app.patch("/api/me", requireAuth, (req, res) => {
     const user = db.users.find((u) => u.id === req.userId);
-    const { avatarDataUrl, username } = req.body || {};
+    const { avatarDataUrl, username, bannerDataUrl } = req.body || {}; // NOVO CAMPO
 
     if (typeof username === "string" && username.trim() !== user.username) {
       const clean = username.trim();
@@ -166,6 +167,16 @@ async function startServer(port = 3000) {
       user.avatarDataUrl = avatarDataUrl;
       persist();
     }
+
+    // NOVO: salvar banner
+    if (typeof bannerDataUrl === "string") {
+      if (!bannerDataUrl.startsWith("data:image/")) {
+        return res.status(400).json({ error: "Banner inválido." });
+      }
+      user.bannerDataUrl = bannerDataUrl;
+      persist();
+    }
+
     res.json(publicUser(user));
   });
 
@@ -395,7 +406,6 @@ async function startServer(port = 3000) {
     if (existing) {
       if (existing.status === "accepted") return res.status(400).json({ error: "Vocês já são amigos." });
       if (existing.fromUserId === target.id) {
-        // a outra pessoa já tinha te chamado - aceita automaticamente
         existing.status = "accepted";
         persist();
         return res.json({ ok: true, autoAccepted: true });
@@ -475,7 +485,7 @@ async function startServer(port = 3000) {
       return res.status(403).json({ error: "Você não tem acesso a esse canal." });
     }
     try {
-      const msgs = await getChannelMessages(req.params.channelId, 100); // só as últimas 100
+      const msgs = await getChannelMessages(req.params.channelId, 100);
       res.json(msgs);
     } catch (err) {
       console.error("Erro ao carregar mensagens:", err.message);
@@ -537,15 +547,13 @@ async function startServer(port = 3000) {
   });
 
   // ---------- Vídeos ----------
-  // O vídeo é enviado antes (aqui) e a mensagem leva só o id dele. Fica guardado
-  // no MongoDB (limite de 10 MB por vídeo, porque o plano grátis tem pouco espaço).
 
   const MAX_VIDEO_BYTES = 10 * 1024 * 1024;
   const ALLOWED_VIDEO_TYPES = /^video\/(mp4|webm|quicktime|ogg)$/;
 
   app.post(
     "/api/channels/:channelId/media",
-    requireAuth, // confere o login ANTES de receber o arquivo
+    requireAuth,
     express.raw({ type: () => true, limit: MAX_VIDEO_BYTES }),
     async (req, res) => {
       if (!channelIfMember(req.params.channelId, req.userId)) {
@@ -580,7 +588,6 @@ async function startServer(port = 3000) {
     }
   );
 
-  // "Range" é o que deixa o player avançar/voltar o vídeo sem baixar tudo de novo.
   function parseRange(header, size) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(header || "");
     if (!m || (m[1] === "" && m[2] === "")) return null;
@@ -597,8 +604,6 @@ async function startServer(port = 3000) {
     return { start, end };
   }
 
-  // O <video> do navegador não consegue mandar o cabeçalho de login, por isso
-  // esta rota também aceita o token na URL (?token=...).
   app.get("/api/media/:mediaId", async (req, res) => {
     const token = (req.headers.authorization || "").replace("Bearer ", "") || (req.query && req.query.token) || "";
     const userId = sessions.get(token);
@@ -634,15 +639,8 @@ async function startServer(port = 3000) {
     }
   });
 
-  // ---------- WebSocket: chat em tempo real + sinalização WebRTC ----------
-  // "callRooms" cuida da chamada de vídeo/tela - agora suporta várias
-  // pessoas ao mesmo tempo: cada pessoa se conecta diretamente com
-  // todas as outras (por isso funciona bem até uns 4-5 participantes).
-  // "chatSubscribers" cuida do chat de texto (qualquer número de gente).
-  // O vídeo em si NUNCA passa por este servidor - só ajuda a conectar.
+  // ---------- WebSocket ----------
 
-  // Rede de segurança: se qualquer rota der um erro inesperado, devolve
-  // uma mensagem decente em vez de travar/mostrar erro genérico.
   app.use((err, req, res, next) => {
     console.error("Erro não tratado:", err);
     const status = err.status || err.statusCode || 500;
@@ -654,15 +652,13 @@ async function startServer(port = 3000) {
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
-  const callRooms = new Map(); // channelId -> Map<peerId, ws>
-  const chatSubscribers = new Map(); // channelId -> Set de conexoes
+  const callRooms = new Map();
+  const chatSubscribers = new Map();
 
   function send(ws, msg) {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
   }
 
-  // Horário sempre crescente: duas mensagens no mesmo milissegundo não podem
-  // trocar de ordem quando o histórico for carregado.
   let lastMessageTime = 0;
   function nextMessageTime() {
     lastMessageTime = Math.max(Date.now(), lastMessageTime + 1);
@@ -677,8 +673,6 @@ async function startServer(port = 3000) {
       let cleanAudio = null;
       if (typeof audioDataUrl === "string" && audioDataUrl.startsWith("data:audio/")) cleanAudio = audioDataUrl;
 
-      // vídeo: só vale se existe e quem manda tem acesso a ele (ou foi quem enviou, ou
-      // está encaminhando de um canal do qual participa)
       let cleanVideoId = null;
       if (typeof videoId === "string" && videoId) {
         const meta = await getMediaMeta(videoId);
@@ -707,9 +701,7 @@ async function startServer(port = 3000) {
         createdAt: nextMessageTime(),
       };
 
-      // Salva ANTES de avisar os outros: se não salvou, a mensagem não é mostrada
-      // como se tivesse sido enviada (assim ninguém acha que foi salva e não foi).
-      if (cleanVideoId) await addMediaChannel(cleanVideoId, channelId); // libera o vídeo pra quem está nesse canal
+      if (cleanVideoId) await addMediaChannel(cleanVideoId, channelId);
       await insertMessage(message);
 
       const subs = chatSubscribers.get(channelId);
@@ -752,7 +744,6 @@ async function startServer(port = 3000) {
 
         ws.channelId = msg.channelId;
 
-        // inscreve pro chat (sem limite de pessoas)
         let subs = chatSubscribers.get(msg.channelId);
         if (!subs) {
           subs = new Set();
@@ -760,7 +751,6 @@ async function startServer(port = 3000) {
         }
         subs.add(ws);
 
-        // entra na sala de chamada (sem limite de pessoas agora)
         let room = callRooms.get(msg.channelId);
         if (!room) {
           room = new Map();
