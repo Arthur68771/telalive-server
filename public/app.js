@@ -5,14 +5,14 @@ let myServers = [];
 let activeServerId = null;
 let activeChannelId = null;
 let activeChannelType = "text";
-let authMode = "login"; // ou "register"
+let authMode = "login";
 
 let ws = null;
 let selfPeerId = null;
-let knownPeers = new Map(); // peerId -> username (quem está no canal agora)
-let pcsOut = new Map(); // peerId -> RTCPeerConnection (conexões que eu abri pra compartilhar MINHA tela)
-let pcsIn = new Map(); // peerId -> RTCPeerConnection (conexões que recebem a tela de OUTRA pessoa)
-const pendingIceCandidates = new Map(); // peerId -> lista de candidatos que chegaram cedo demais
+let knownPeers = new Map();
+let pcsOut = new Map();
+let pcsIn = new Map();
+const pendingIceCandidates = new Map();
 let localScreenStream = null;
 let localMicStream = null;
 let micMuted = false;
@@ -54,10 +54,9 @@ const leaveChannelBtn = document.getElementById("leave-channel-btn");
 let deafened = false;
 
 let audioContext = null;
-const audioAnalysers = new Map(); // "me" ou peerId -> AnalyserNode
+const audioAnalysers = new Map();
 let speakingLoopRunning = false;
 
-// ---------- Sons de notificação ----------
 const joinSound = new Audio("join.mp3");
 const leaveSound = new Audio("leave.mp3");
 const messageSound = new Audio("message.mp3");
@@ -125,10 +124,11 @@ const profileModalCancel = document.getElementById("profile-modal-cancel");
 const profileModalConfirm = document.getElementById("profile-modal-confirm");
 const profileLogoutBtn = document.getElementById("profile-logout-btn");
 
-// NOVO: elementos do banner
 const profileBannerPreview = document.getElementById("profile-banner-preview");
 const profileBannerInput = document.getElementById("profile-banner-input");
 const profileBannerChooseBtn = document.getElementById("profile-banner-choose-btn");
+const profilePronounsInput = document.getElementById("profile-pronouns-input");
+const profileBioInput = document.getElementById("profile-bio-input");
 let pendingBannerDataUrl = null;
 
 const editServerIconBtn = document.getElementById("edit-server-icon-btn");
@@ -173,7 +173,7 @@ const ctxToggleMutedSwitch = document.getElementById("ctx-toggle-muted-switch");
 const itemContextMenu = document.getElementById("item-context-menu");
 const itemCtxCreateChannel = document.getElementById("item-ctx-create-channel");
 const itemCtxDelete = document.getElementById("item-ctx-delete");
-let itemContextTarget = null; // { type: "channel" | "category", id }
+let itemContextTarget = null;
 
 let contextMenuServerId = null;
 let hideMutedChannels = localStorage.getItem("telalive-hide-muted") === "1";
@@ -181,7 +181,16 @@ let hideMutedChannels = localStorage.getItem("telalive-hide-muted") === "1";
 let pendingAvatarDataUrl = null;
 let pendingServerIconDataUrl = null;
 
-// ---------- Redimensionar imagem antes de enviar ----------
+// NOVO: elementos do card de perfil
+const userCardModal = document.getElementById("user-card-modal");
+const userCardBanner = document.getElementById("user-card-banner");
+const userCardAvatar = document.getElementById("user-card-avatar");
+const userCardName = document.getElementById("user-card-name");
+const userCardPronouns = document.getElementById("user-card-pronouns");
+const userCardBio = document.getElementById("user-card-bio");
+const userCardClose = document.getElementById("user-card-close");
+
+// ---------- Redimensionar imagem ----------
 function resizeImageFile(file, maxSize = 160) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -238,6 +247,38 @@ function avatarHtml(username, avatarDataUrl) {
   if (avatarDataUrl) return `<img src="${avatarDataUrl}" alt="" />`;
   return escapeHtml((username || "?").slice(0, 2).toUpperCase());
 }
+
+// ---------- Card de perfil (estilo Discord) ----------
+function openUserCard(user) {
+  if (!user) return;
+  userCardName.textContent = user.username || "?";
+  userCardAvatar.innerHTML = avatarHtml(user.username, user.avatarDataUrl);
+  if (user.bannerDataUrl) {
+    userCardBanner.style.backgroundImage = `url(${user.bannerDataUrl})`;
+  } else {
+    userCardBanner.style.backgroundImage = "";
+  }
+  if (user.pronouns) {
+    userCardPronouns.textContent = user.pronouns;
+    userCardPronouns.style.display = "block";
+  } else {
+    userCardPronouns.style.display = "none";
+  }
+  userCardBio.textContent = user.bio || "Sem bio.";
+  userCardModal.classList.remove("hidden");
+}
+
+function closeUserCard() {
+  userCardModal.classList.add("hidden");
+}
+
+userCardClose.addEventListener("click", closeUserCard);
+userCardModal.addEventListener("click", (e) => {
+  if (e.target === userCardModal) closeUserCard();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !userCardModal.classList.contains("hidden")) closeUserCard();
+});
 
 // ---------- Chamadas à API ----------
 async function api(path, options = {}) {
@@ -509,10 +550,10 @@ function appendChatMessage(msg) {
       <button class="chat-msg-action-btn" data-action="forward" title="Encaminhar">➡️</button>
       ${isMe ? '<button class="chat-msg-action-btn" data-action="delete" title="Excluir">🗑️</button>' : ""}
     </div>
-    <div class="avatar">${avatarHtml(msg.username, msg.avatarDataUrl)}</div>
+    <div class="avatar" data-user-id="${msg.userId}" style="cursor:pointer;">${avatarHtml(msg.username, msg.avatarDataUrl)}</div>
     <div class="chat-msg-body">
       <div class="chat-msg-head">
-        <span class="chat-msg-author${isMe ? " me" : ""}">${escapeHtml(msg.username)}</span>
+        <span class="chat-msg-author${isMe ? " me" : ""}" data-user-id="${msg.userId}" style="cursor:pointer;">${escapeHtml(msg.username)}</span>
         <span class="chat-msg-time">${time}</span>
         ${msg.editedAt ? '<span class="chat-msg-edited-tag">(editado)</span>' : ""}
       </div>
@@ -525,6 +566,27 @@ function appendChatMessage(msg) {
       ${msg.videoId ? `<video class="chat-msg-video" controls preload="metadata" src="/api/media/${encodeURIComponent(msg.videoId)}?token=${encodeURIComponent(token)}"></video>` : ""}
     </div>
   `;
+
+  // clicar no avatar do chat abre o card
+  el.querySelector('[data-user-id]').addEventListener("click", async () => {
+    if (msg.userId === currentUser?.id) {
+      openUserCard(currentUser);
+      return;
+    }
+    try {
+      const friends = await api("/api/friends");
+      const friend = friends.friends.find((f) => f.id === msg.userId);
+      if (friend) {
+        openUserCard(friend);
+      } else {
+        // não é amigo: mostra o que dá (sem bio/pronomes)
+        openUserCard({ id: msg.userId, username: msg.username, avatarDataUrl: msg.avatarDataUrl });
+      }
+    } catch {
+      openUserCard({ id: msg.userId, username: msg.username, avatarDataUrl: msg.avatarDataUrl });
+    }
+  });
+
   if (msg.imageDataUrl) {
     el.querySelector(".chat-msg-image").addEventListener("click", () => openLightbox(msg.imageDataUrl));
   }
@@ -966,14 +1028,25 @@ function renderParticipantsBar() {
   const meCircle = document.createElement("div");
   meCircle.className = "participant-circle";
   meCircle.dataset.key = "me";
-  meCircle.innerHTML = `<div class="avatar-lg">${avatarHtml(currentUser?.username, currentUser?.avatarDataUrl)}</div><div class="participant-name">Você</div>`;
+  meCircle.innerHTML = `<div class="avatar-lg" data-user-id="me" style="cursor:pointer;">${avatarHtml(currentUser?.username, currentUser?.avatarDataUrl)}</div><div class="participant-name">Você</div>`;
+  meCircle.querySelector('[data-user-id="me"]').addEventListener("click", () => openUserCard(currentUser));
   participantsCircleRow.appendChild(meCircle);
 
   for (const [peerId, peer] of knownPeers) {
     const circle = document.createElement("div");
     circle.className = "participant-circle";
     circle.dataset.key = peerId;
-    circle.innerHTML = `<div class="avatar-lg">${avatarHtml(peer.username, peer.avatarDataUrl)}</div><div class="participant-name">${escapeHtml(peer.username)}</div>`;
+    circle.innerHTML = `<div class="avatar-lg" data-peer-id="${peerId}" style="cursor:pointer;">${avatarHtml(peer.username, peer.avatarDataUrl)}</div><div class="participant-name">${escapeHtml(peer.username)}</div>`;
+    circle.querySelector('[data-peer-id]').addEventListener("click", async () => {
+      try {
+        const friends = await api("/api/friends");
+        const friend = friends.friends.find((f) => f.username === peer.username);
+        if (friend) openUserCard(friend);
+        else openUserCard({ username: peer.username, avatarDataUrl: peer.avatarDataUrl });
+      } catch {
+        openUserCard({ username: peer.username, avatarDataUrl: peer.avatarDataUrl });
+      }
+    });
     participantsCircleRow.appendChild(circle);
   }
 
@@ -1428,15 +1501,14 @@ channelModalConfirm.addEventListener("click", async () => {
   }
 });
 
-// ---------- Modal: editar perfil (COM BANNER) ----------
+// ---------- Modal: editar perfil ----------
 const profileUsernameInput = document.getElementById("profile-username-input");
 
 profileBtn.addEventListener("click", () => {
   pendingAvatarDataUrl = null;
-  pendingBannerDataUrl = null; // NOVO
+  pendingBannerDataUrl = null;
   profileModalStatus.textContent = "";
   profileAvatarPreview.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
-  // NOVO: preenche o banner
   if (currentUser?.bannerDataUrl) {
     profileBannerPreview.style.backgroundImage = `url(${currentUser.bannerDataUrl})`;
     profileBannerPreview.innerHTML = "";
@@ -1445,11 +1517,13 @@ profileBtn.addEventListener("click", () => {
     profileBannerPreview.innerHTML = '<span style="color: var(--muted); font-size: 0.85rem;">Sem banner</span>';
   }
   profileUsernameInput.value = currentUser?.username || "";
+  profilePronounsInput.value = currentUser?.pronouns || "";
+  profileBioInput.value = currentUser?.bio || "";
   profileModal.classList.remove("hidden");
 });
 
 profileAvatarChooseBtn.addEventListener("click", () => profileAvatarInput.click());
-profileBannerChooseBtn.addEventListener("click", () => profileBannerInput.click()); // NOVO
+profileBannerChooseBtn.addEventListener("click", () => profileBannerInput.click());
 
 profileAvatarInput.addEventListener("change", async () => {
   const file = profileAvatarInput.files[0];
@@ -1458,7 +1532,6 @@ profileAvatarInput.addEventListener("change", async () => {
   profileAvatarPreview.innerHTML = `<img src="${pendingAvatarDataUrl}" alt="" />`;
 });
 
-// NOVO: redimensiona o banner (mais largo, 640px)
 profileBannerInput.addEventListener("change", async () => {
   const file = profileBannerInput.files[0];
   if (!file) return;
@@ -1486,10 +1559,14 @@ profileLogoutBtn.addEventListener("click", () => {
 
 profileModalConfirm.addEventListener("click", async () => {
   const newUsername = profileUsernameInput.value.trim();
+  const newPronouns = profilePronounsInput.value.trim();
+  const newBio = profileBioInput.value.trim();
   const body = {};
   if (pendingAvatarDataUrl) body.avatarDataUrl = pendingAvatarDataUrl;
-  if (pendingBannerDataUrl) body.bannerDataUrl = pendingBannerDataUrl; // NOVO
+  if (pendingBannerDataUrl) body.bannerDataUrl = pendingBannerDataUrl;
   if (newUsername && newUsername !== currentUser?.username) body.username = newUsername;
+  if (newPronouns !== (currentUser?.pronouns || "")) body.pronouns = newPronouns;
+  if (newBio !== (currentUser?.bio || "")) body.bio = newBio;
 
   if (Object.keys(body).length === 0) {
     profileModal.classList.add("hidden");
@@ -1577,10 +1654,12 @@ function renderFriendRow({ user, requestId, kind }) {
       ? `<button class="friend-action-btn decline" data-id="${requestId}">Cancelar</button>`
       : `<button class="friend-action-btn accept" id="dm-btn">Conversar</button>`;
   row.innerHTML = `
-    <div class="avatar">${avatarHtml(user.username, user.avatarDataUrl)}</div>
+    <div class="avatar" style="cursor:pointer;">${avatarHtml(user.username, user.avatarDataUrl)}</div>
     <div class="friend-name">${escapeHtml(user.username)}</div>
     <div class="friend-actions">${actionsHtml}</div>
   `;
+  // clicar no avatar do amigo abre o card
+  row.querySelector(".avatar").addEventListener("click", () => openUserCard(user));
   if (kind === "incoming") {
     row.querySelector(".accept").addEventListener("click", () => respondFriendRequest(requestId, "accept"));
     row.querySelector(".decline").addEventListener("click", () => respondFriendRequest(requestId, "decline"));
