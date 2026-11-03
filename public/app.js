@@ -533,24 +533,24 @@ async function loadMessageHistory(channelId) {
   }
 }
 
-// ---------- Checar destaque (agora mais robusto) ----------
+// ---------- NOVO: checar se a mensagem deve ter a listra amarela ----------
 function shouldHighlightMessage(msg) {
   if (!currentUser) return false;
-  if (msg.userId === currentUser.id) return false; // não destaca próprias mensagens
+  if (msg.userId === currentUser.id) return false; // não destaca as próprias mensagens
+  const text = (msg.text || "").toLowerCase();
 
-  const rawText = (msg.text || "");
+  // 1) @everyone no texto → destaca pra todos
+  if (/@everyone\b/.test(text)) return true;
 
-  // 1) @everyone → destaca pra todos (case-insensitive, aceita espaços)
-  if (/@everyone/i.test(rawText)) return true;
-
-  // 2) menção direta ao meu username (case-insensitive, aceita acentos)
+  // 2) menção direta ao meu username → destaca só pra mim
   const myUsername = (currentUser.username || "").toLowerCase();
   if (myUsername) {
-    const lowerText = rawText.toLowerCase();
-    if (lowerText.includes(`@${myUsername}`)) return true;
+    // aceita @username no texto (com borda de palavra)
+    const regex = new RegExp(`@${myUsername.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    if (regex.test(msg.text || "")) return true;
   }
 
-  // 3) é resposta a uma mensagem minha
+  // 3) é resposta a uma mensagem minha → destaca
   if (msg.replyTo && msg.replyTo.username === currentUser.username) return true;
 
   return false;
@@ -832,7 +832,7 @@ chatInput.addEventListener("paste", (e) => {
   }
 });
 
-// ---------- Menções com @ (CORRIGIDO) ----------
+// ---------- Menções com @ ----------
 async function getMentionOptions(query) {
   if (!cachedFriendsForMention) {
     try {
@@ -843,18 +843,13 @@ async function getMentionOptions(query) {
     }
   }
   const options = [{ everyone: true, label: "everyone" }, ...cachedFriendsForMention.map((f) => ({ user: f }))];
-  const q = (query || "").toLowerCase();
-  // filtra: everyone ou username que começa/inclui a query
-  return options.filter((o) => {
-    if (o.everyone) return "everyone".includes(q);
-    return (o.user.username || "").toLowerCase().includes(q);
-  });
+  const q = query.toLowerCase();
+  return options.filter((o) => (o.everyone ? "everyone" : o.user.username.toLowerCase()).includes(q));
 }
 
 function getMentionQuery() {
   const cursor = chatInput.selectionStart;
   const textBefore = chatInput.value.slice(0, cursor);
-  // captura @ seguido de letras/números/underscore até o cursor
   const match = textBefore.match(/(?:^|\s)@([a-zA-Z0-9_]*)$/);
   return match ? match[1] : null;
 }
@@ -897,14 +892,11 @@ function applyMention(opt) {
   chatInput.focus();
 }
 
-// Chama updateMentionDropdown a cada input
 chatInput.addEventListener("input", updateMentionDropdown);
 
-// Navegação por teclado no dropdown
 chatInput.addEventListener("keydown", (e) => {
   if (mentionDropdown.classList.contains("hidden")) return;
   const items = [...mentionDropdown.children];
-  if (items.length === 0) return;
   if (e.key === "ArrowDown") {
     e.preventDefault();
     mentionActiveIndex = (mentionActiveIndex + 1) % items.length;
