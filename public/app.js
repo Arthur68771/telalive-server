@@ -181,7 +181,7 @@ let hideMutedChannels = localStorage.getItem("telalive-hide-muted") === "1";
 let pendingAvatarDataUrl = null;
 let pendingServerIconDataUrl = null;
 
-// NOVO: elementos do card de perfil
+// Card de perfil
 const userCardModal = document.getElementById("user-card-modal");
 const userCardBanner = document.getElementById("user-card-banner");
 const userCardAvatar = document.getElementById("user-card-avatar");
@@ -248,7 +248,7 @@ function avatarHtml(username, avatarDataUrl) {
   return escapeHtml((username || "?").slice(0, 2).toUpperCase());
 }
 
-// ---------- Card de perfil (estilo Discord) ----------
+// ---------- Card de perfil ----------
 function openUserCard(user) {
   if (!user) return;
   userCardName.textContent = user.username || "?";
@@ -533,15 +533,39 @@ async function loadMessageHistory(channelId) {
   }
 }
 
+// ---------- NOVO: checar se a mensagem deve ter a listra amarela ----------
+function shouldHighlightMessage(msg) {
+  if (!currentUser) return false;
+  if (msg.userId === currentUser.id) return false; // não destaca as próprias mensagens
+  const text = (msg.text || "").toLowerCase();
+
+  // 1) @everyone no texto → destaca pra todos
+  if (/@everyone\b/.test(text)) return true;
+
+  // 2) menção direta ao meu username → destaca só pra mim
+  const myUsername = (currentUser.username || "").toLowerCase();
+  if (myUsername) {
+    // aceita @username no texto (com borda de palavra)
+    const regex = new RegExp(`@${myUsername.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    if (regex.test(msg.text || "")) return true;
+  }
+
+  // 3) é resposta a uma mensagem minha → destaca
+  if (msg.replyTo && msg.replyTo.username === currentUser.username) return true;
+
+  return false;
+}
+
 function appendChatMessage(msg) {
   const emptyMsg = chatMessagesEl.querySelector(".chat-empty");
   if (emptyMsg) emptyMsg.remove();
 
   const isMe = currentUser && msg.userId === currentUser.id;
   const time = new Date(msg.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const highlighted = shouldHighlightMessage(msg);
 
   const el = document.createElement("div");
-  el.className = "chat-msg";
+  el.className = "chat-msg" + (highlighted ? " mentioned" : "");
   el.dataset.messageId = msg.id;
   el.innerHTML = `
     <div class="chat-msg-actions">
@@ -567,7 +591,6 @@ function appendChatMessage(msg) {
     </div>
   `;
 
-  // clicar no avatar do chat abre o card
   el.querySelector('[data-user-id]').addEventListener("click", async () => {
     if (msg.userId === currentUser?.id) {
       openUserCard(currentUser);
@@ -579,7 +602,6 @@ function appendChatMessage(msg) {
       if (friend) {
         openUserCard(friend);
       } else {
-        // não é amigo: mostra o que dá (sem bio/pronomes)
         openUserCard({ id: msg.userId, username: msg.username, avatarDataUrl: msg.avatarDataUrl });
       }
     } catch {
@@ -997,6 +1019,8 @@ function connectToChannel(channelId) {
           if (!el.querySelector(".chat-msg-edited-tag")) {
             el.querySelector(".chat-msg-time").insertAdjacentHTML("afterend", '<span class="chat-msg-edited-tag">(editado)</span>');
           }
+          // recalcula a listra amarela depois de editar
+          el.classList.toggle("mentioned", shouldHighlightMessage(msg.message));
         }
         break;
       }
@@ -1658,7 +1682,6 @@ function renderFriendRow({ user, requestId, kind }) {
     <div class="friend-name">${escapeHtml(user.username)}</div>
     <div class="friend-actions">${actionsHtml}</div>
   `;
-  // clicar no avatar do amigo abre o card
   row.querySelector(".avatar").addEventListener("click", () => openUserCard(user));
   if (kind === "incoming") {
     row.querySelector(".accept").addEventListener("click", () => respondFriendRequest(requestId, "accept"));
