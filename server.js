@@ -59,7 +59,9 @@ async function startServer(port = 3000) {
       id: user.id,
       username: user.username,
       avatarDataUrl: user.avatarDataUrl || user.googlePicture || null,
-      bannerDataUrl: user.bannerDataUrl || null, // NOVO CAMPO
+      bannerDataUrl: user.bannerDataUrl || null,
+      bio: user.bio || "",
+      pronouns: user.pronouns || "",
     };
   }
 
@@ -146,7 +148,7 @@ async function startServer(port = 3000) {
 
   app.patch("/api/me", requireAuth, (req, res) => {
     const user = db.users.find((u) => u.id === req.userId);
-    const { avatarDataUrl, username, bannerDataUrl } = req.body || {}; // NOVO CAMPO
+    const { avatarDataUrl, username, bannerDataUrl, bio, pronouns } = req.body || {};
 
     if (typeof username === "string" && username.trim() !== user.username) {
       const clean = username.trim();
@@ -168,12 +170,21 @@ async function startServer(port = 3000) {
       persist();
     }
 
-    // NOVO: salvar banner
     if (typeof bannerDataUrl === "string") {
       if (!bannerDataUrl.startsWith("data:image/")) {
         return res.status(400).json({ error: "Banner inválido." });
       }
       user.bannerDataUrl = bannerDataUrl;
+      persist();
+    }
+
+    if (typeof bio === "string") {
+      user.bio = bio.trim().slice(0, 190);
+      persist();
+    }
+
+    if (typeof pronouns === "string") {
+      user.pronouns = pronouns.trim().slice(0, 40);
       persist();
     }
 
