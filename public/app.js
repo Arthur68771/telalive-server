@@ -189,9 +189,18 @@ const userCardPronouns = document.getElementById("user-card-pronouns");
 const userCardBio = document.getElementById("user-card-bio");
 const userCardClose = document.getElementById("user-card-close");
 
-// ---------- Redimensionar imagem ----------
+// ---------- Redimensionar imagem (Permite GIF e mantém animação) ----------
 function resizeImageFile(file, maxSize = 160) {
   return new Promise((resolve, reject) => {
+    // Se for GIF, envia do jeito que tá pra não perder a animação
+    if (file.type === "image/gif") {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+      return;
+    }
+    
     const reader = new FileReader();
     reader.onerror = reject;
     reader.onload = () => {
@@ -206,7 +215,7 @@ function resizeImageFile(file, maxSize = 160) {
         const sx = (img.width - side) / 2;
         const sy = (img.height - side) / 2;
         ctx.drawImage(img, sx, sy, side, side, 0, 0, maxSize, maxSize);
-        resolve(canvas.toDataURL("image/jpeg", 0.85));
+        resolve(canvas.toDataURL("image/webp", 0.85)); // Usa webp que é mais leve e moderno
       };
       img.src = reader.result;
     };
@@ -216,6 +225,14 @@ function resizeImageFile(file, maxSize = 160) {
 
 function resizeImageKeepAspect(file, maxDimension = 640) {
   return new Promise((resolve, reject) => {
+    if (file.type === "image/gif") {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+      return;
+    }
+    
     const reader = new FileReader();
     reader.onerror = reject;
     reader.onload = () => {
@@ -234,7 +251,7 @@ function resizeImageKeepAspect(file, maxDimension = 640) {
         canvas.width = width;
         canvas.height = height;
         canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", 0.82));
+        resolve(canvas.toDataURL("image/webp", 0.82));
       };
       img.src = reader.result;
     };
@@ -470,16 +487,6 @@ function shouldHighlightMessage(msg) {
   return false;
 }
 
-// Formata o tamanho do arquivo pra ficar bonitinho (KB, MB)
-function formatBytes(bytes, decimals = 2) {
-  if (!+bytes) return '0 Bytes';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-}
-
 function appendChatMessage(msg) {
   const emptyMsg = chatMessagesEl.querySelector(".chat-empty");
   if (emptyMsg) emptyMsg.remove();
@@ -505,7 +512,6 @@ function appendChatMessage(msg) {
     formattedText = html;
   }
 
-  // --- NOVO: Arquivos genéricos ---
   let fileHtml = "";
   if (msg.fileId) {
     const fileUrl = `/api/media/${encodeURIComponent(msg.fileId)}?token=${encodeURIComponent(token)}&download=1`;
@@ -580,12 +586,12 @@ lightbox.addEventListener("click", (e) => { if (e.target !== lightboxImg) closeL
 lightboxClose.addEventListener("click", closeLightbox);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !lightbox.classList.contains("hidden")) closeLightbox(); });
 
-// ---------- Enviar vídeo e arquivo no chat ----------
+// ---------- Enviar arquivo no chat ----------
 const MAX_CHAT_FILE_BYTES = 15 * 1024 * 1024;
 const chatVideoPreview = document.getElementById("chat-video-preview");
 const chatVideoPreviewPlayer = document.getElementById("chat-video-preview-player");
 const chatVideoPreviewRemove = document.getElementById("chat-video-preview-remove");
-let pendingChatFile = null; // Pode ser vídeo, pdf, zip, doc, etc.
+let pendingChatFile = null;
 let pendingChatFileObjectUrl = null;
 let sendingChatMessage = false;
 
@@ -598,7 +604,6 @@ function clearPendingChatFile() {
   chatVideoPreviewPlayer.load();
 }
 
-// Essa é a função que processa o input file
 async function setPendingChatFile(file) {
   if (!file) return;
 
@@ -608,7 +613,6 @@ async function setPendingChatFile(file) {
     return;
   }
 
-  // Se for vídeo ou qualquer outro arquivo (PDF, ZIP, EXE, etc), mostra o preview
   if (file.size > MAX_CHAT_FILE_BYTES) {
     alert(`Esse arquivo tem ${(file.size / 1024 / 1024).toFixed(1)} MB. O limite é 15 MB.`);
     chatImageInput.value = "";
@@ -621,12 +625,10 @@ async function setPendingChatFile(file) {
   pendingChatFile = file;
   pendingChatFileObjectUrl = URL.createObjectURL(file);
   
-  // Se for vídeo, tenta tocar no preview. Se não, mostra o nome.
   if (file.type.startsWith("video/")) {
     chatVideoPreviewPlayer.src = pendingChatFileObjectUrl;
   } else {
     chatVideoPreviewPlayer.src = "";
-    // O título do elemento vai mostrar o nome do arquivo
     chatVideoPreviewPlayer.title = file.name;
   }
   
@@ -708,7 +710,6 @@ chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && mentionDropdown.classList.contains("hidden")) sendChatMessage();
 });
 
-// ---------- Enviar imagem no chat ----------
 async function setPendingChatImage(file) {
   if (!file || !file.type.startsWith("image/")) return;
   pendingChatImageDataUrl = await resizeImageKeepAspect(file, 640);
@@ -913,6 +914,38 @@ function connectToChannel(channelId) {
         const el = chatMessagesEl.querySelector(`[data-message-id="${msg.messageId}"]`);
         if (el) el.remove();
         if (chatMessagesEl.children.length === 0) chatMessagesEl.innerHTML = '<p class="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>';
+        break;
+      }
+      // NOVO: Quando alguém muda o perfil, atualiza pra todo mundo na hora
+      case "user-updated": {
+        if (msg.user.id === currentUser.id) {
+          currentUser = msg.user;
+          updateProfileBtn();
+        }
+        
+        // Atualiza o cache de amigos
+        if (cachedFriendsForMention) {
+          const friendIdx = cachedFriendsForMention.findIndex((f) => f.id === msg.user.id);
+          if (friendIdx !== -1) cachedFriendsForMention[friendIdx] = msg.user;
+        }
+
+        // Atualiza os avatares no chat que sejam desse usuário
+        document.querySelectorAll(`.chat-msg .avatar[data-user-id="${msg.user.id}"]`).forEach((el) => {
+          el.innerHTML = avatarHtml(msg.user.username, msg.user.avatarDataUrl);
+        });
+        document.querySelectorAll(`.chat-msg .chat-msg-author[data-user-id="${msg.user.id}"]`).forEach((el) => {
+          el.textContent = msg.user.username;
+        });
+        document.querySelectorAll(`.chat-msg .chat-msg-author[data-user-id="${msg.user.id}"]`).classList.toggle("me", msg.user.id === currentUser?.id);
+
+        // Atualiza os participantes em call
+        renderParticipantsBar();
+        
+        // Se o card dele estiver aberto, atualiza na hora
+        if (!userCardModal.classList.contains("hidden") && userCardName.textContent === msg.user.username) {
+          // Verifica se é o mesmo (pode ter mudado de nome, então confia no id se possível)
+          openUserCard(msg.user);
+        }
         break;
       }
     }
