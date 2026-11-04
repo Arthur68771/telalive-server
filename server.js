@@ -6,19 +6,9 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const { OAuth2Client } = require("google-auth-library");
 const {
-  loadDB,
-  saveDB,
-  insertMessage,
-  getMessage,
-  getChannelMessages,
-  updateMessage,
-  deleteMessageById,
-  deleteChannelMessages,
-  insertMedia,
-  getMediaMeta,
-  getMediaData,
-  addMediaChannel,
-  deleteMediaIfUnused,
+  loadDB, saveDB, insertMessage, getMessage, getChannelMessages,
+  updateMessage, deleteMessageById, deleteChannelMessages, insertMedia,
+  getMediaMeta, getMediaData, addMediaChannel, deleteMediaIfUnused,
 } = require("./db");
 
 const GOOGLE_CLIENT_ID = "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
@@ -38,12 +28,9 @@ async function startServer(port = 3000) {
   }
 
   const sessions = new Map();
-
   const app = express();
-  app.use(express.json({ limit: "8mb" }));
+  app.use(express.json({ limit: "15mb" })); // Aumentei o limite pra caber arquivos maiores
   app.use(express.static(path.join(__dirname, "public")));
-
-  // ---------- Autenticação ----------
 
   function requireAuth(req, res, next) {
     const header = req.headers.authorization || "";
@@ -56,12 +43,10 @@ async function startServer(port = 3000) {
 
   function publicUser(user) {
     return {
-      id: user.id,
-      username: user.username,
+      id: user.id, username: user.username,
       avatarDataUrl: user.avatarDataUrl || user.googlePicture || null,
       bannerDataUrl: user.bannerDataUrl || null,
-      bio: user.bio || "",
-      pronouns: user.pronouns || "",
+      bio: user.bio || "", pronouns: user.pronouns || "",
     };
   }
 
@@ -77,24 +62,14 @@ async function startServer(port = 3000) {
 
   app.post("/api/register", async (req, res) => {
     const { username, password } = req.body || {};
-    if (!username || username.trim().length < 3) {
-      return res.status(400).json({ error: "Nome de usuário precisa ter pelo menos 3 letras." });
-    }
-    if (!password || password.length < 4) {
-      return res.status(400).json({ error: "Senha precisa ter pelo menos 4 caracteres." });
-    }
+    if (!username || username.trim().length < 3) return res.status(400).json({ error: "Nome precisa ter pelo menos 3 letras." });
+    if (!password || password.length < 4) return res.status(400).json({ error: "Senha precisa ter pelo menos 4 caracteres." });
     const clean = username.trim();
-    if (db.users.some((u) => u.username.toLowerCase() === clean.toLowerCase())) {
-      return res.status(400).json({ error: "Esse nome de usuário já existe." });
-    }
-    const user = {
-      id: crypto.randomUUID(),
-      username: clean,
-      passwordHash: await bcrypt.hash(password, 10),
-    };
+    if (db.users.some((u) => u.username.toLowerCase() === clean.toLowerCase())) return res.status(400).json({ error: "Esse nome já existe." });
+    
+    const user = { id: crypto.randomUUID(), username: clean, passwordHash: await bcrypt.hash(password, 10) };
     db.users.push(user);
     persist();
-
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, user.id);
     res.json({ token, user: publicUser(user) });
@@ -114,28 +89,18 @@ async function startServer(port = 3000) {
   app.post("/api/auth/google", async (req, res) => {
     const { idToken } = req.body || {};
     if (!idToken) return res.status(400).json({ error: "Token do Google ausente." });
-
     let payload;
     try {
       const ticket = await googleClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
       payload = ticket.getPayload();
-    } catch {
-      return res.status(401).json({ error: "Não foi possível verificar sua conta do Google." });
-    }
-
+    } catch { return res.status(401).json({ error: "Erro ao verificar conta do Google." }); }
+    
     let user = db.users.find((u) => u.googleId === payload.sub);
     if (!user) {
-      user = {
-        id: crypto.randomUUID(),
-        username: uniqueUsernameFrom(payload.name || payload.email.split("@")[0]),
-        googleId: payload.sub,
-        googlePicture: payload.picture || null,
-        passwordHash: null,
-      };
+      user = { id: crypto.randomUUID(), username: uniqueUsernameFrom(payload.name || payload.email.split("@")[0]), googleId: payload.sub, googlePicture: payload.picture || null, passwordHash: null };
       db.users.push(user);
       persist();
     }
-
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, user.id);
     res.json({ token, user: publicUser(user) });
@@ -149,89 +114,39 @@ async function startServer(port = 3000) {
   app.patch("/api/me", requireAuth, (req, res) => {
     const user = db.users.find((u) => u.id === req.userId);
     const { avatarDataUrl, username, bannerDataUrl, bio, pronouns } = req.body || {};
-
     if (typeof username === "string" && username.trim() !== user.username) {
       const clean = username.trim();
-      if (clean.length < 3) {
-        return res.status(400).json({ error: "Nome de usuário precisa ter pelo menos 3 letras." });
-      }
-      if (db.users.some((u) => u.id !== user.id && u.username.toLowerCase() === clean.toLowerCase())) {
-        return res.status(400).json({ error: "Esse nome de usuário já existe." });
-      }
+      if (clean.length < 3) return res.status(400).json({ error: "Nome precisa ter pelo menos 3 letras." });
+      if (db.users.some((u) => u.id !== user.id && u.username.toLowerCase() === clean.toLowerCase())) return res.status(400).json({ error: "Esse nome já existe." });
       user.username = clean;
       persist();
     }
-
-    if (typeof avatarDataUrl === "string") {
-      if (!avatarDataUrl.startsWith("data:image/")) {
-        return res.status(400).json({ error: "Imagem inválida." });
-      }
-      user.avatarDataUrl = avatarDataUrl;
-      persist();
-    }
-
-    if (typeof bannerDataUrl === "string") {
-      if (!bannerDataUrl.startsWith("data:image/")) {
-        return res.status(400).json({ error: "Banner inválido." });
-      }
-      user.bannerDataUrl = bannerDataUrl;
-      persist();
-    }
-
-    if (typeof bio === "string") {
-      user.bio = bio.trim().slice(0, 190);
-      persist();
-    }
-
-    if (typeof pronouns === "string") {
-      user.pronouns = pronouns.trim().slice(0, 40);
-      persist();
-    }
-
+    if (typeof avatarDataUrl === "string" && avatarDataUrl.startsWith("data:image/")) { user.avatarDataUrl = avatarDataUrl; persist(); }
+    if (typeof bannerDataUrl === "string" && bannerDataUrl.startsWith("data:image/")) { user.bannerDataUrl = bannerDataUrl; persist(); }
+    if (typeof bio === "string") { user.bio = bio.trim().slice(0, 190); persist(); }
+    if (typeof pronouns === "string") { user.pronouns = pronouns.trim().slice(0, 40); persist(); }
     res.json(publicUser(user));
   });
 
-  // ---------- Servidores e canais ----------
-
   function serverWithChannels(server, userId) {
-    const muted = new Set(
-      (db.users.find((u) => u.id === userId)?.mutedChannelIds) || []
-    );
+    const muted = new Set((db.users.find((u) => u.id === userId)?.mutedChannelIds) || []);
     const isOwner = server.ownerId === userId;
-    const categories = db.categories.filter(
-      (c) => c.serverId === server.id && (!c.private || isOwner || (c.allowedUserIds || []).includes(userId))
-    );
+    const categories = db.categories.filter((c) => c.serverId === server.id && (!c.private || isOwner || (c.allowedUserIds || []).includes(userId)));
     const visibleCategoryIds = new Set(categories.map((c) => c.id));
     return {
-      ...server,
-      categories,
-      channels: db.channels
-        .filter((c) => c.serverId === server.id && (!c.categoryId || visibleCategoryIds.has(c.categoryId)))
-        .map((c) => ({ ...c, muted: muted.has(c.id) })),
+      ...server, categories,
+      channels: db.channels.filter((c) => c.serverId === server.id && (!c.categoryId || visibleCategoryIds.has(c.categoryId))).map((c) => ({ ...c, muted: muted.has(c.id) })),
     };
   }
 
-  app.get("/api/servers", requireAuth, (req, res) => {
-    const mine = db.servers.filter((s) => s.members.includes(req.userId));
-    res.json(mine.map((s) => serverWithChannels(s, req.userId)));
-  });
-
+  app.get("/api/servers", requireAuth, (req, res) => res.json(db.servers.filter((s) => s.members.includes(req.userId)).map((s) => serverWithChannels(s, req.userId))));
+  
   app.post("/api/servers", requireAuth, (req, res) => {
     const { name } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome ao servidor." });
-
-    const server = {
-      id: crypto.randomUUID(),
-      name: name.trim(),
-      ownerId: req.userId,
-      inviteCode: crypto.randomBytes(4).toString("hex"),
-      members: [req.userId],
-    };
+    const server = { id: crypto.randomUUID(), name: name.trim(), ownerId: req.userId, inviteCode: crypto.randomBytes(4).toString("hex"), members: [req.userId] };
     db.servers.push(server);
-
-    const generalChannel = { id: crypto.randomUUID(), serverId: server.id, name: "geral", categoryId: null };
-    db.channels.push(generalChannel);
-
+    db.channels.push({ id: crypto.randomUUID(), serverId: server.id, name: "geral", categoryId: null });
     persist();
     res.json(serverWithChannels(server, req.userId));
   });
@@ -239,61 +154,32 @@ async function startServer(port = 3000) {
   app.post("/api/servers/join", requireAuth, (req, res) => {
     const { inviteCode } = req.body || {};
     const server = db.servers.find((s) => s.inviteCode === (inviteCode || "").trim());
-    if (!server) return res.status(404).json({ error: "Código de convite inválido." });
-
-    if (!server.members.includes(req.userId)) {
-      server.members.push(req.userId);
-      persist();
-    }
+    if (!server) return res.status(404).json({ error: "Código inválido." });
+    if (!server.members.includes(req.userId)) { server.members.push(req.userId); persist(); }
     res.json(serverWithChannels(server, req.userId));
   });
 
   app.patch("/api/servers/:serverId", requireAuth, (req, res) => {
     const server = db.servers.find((s) => s.id === req.params.serverId);
-    if (!server || !server.members.includes(req.userId)) {
-      return res.status(403).json({ error: "Você não faz parte desse servidor." });
-    }
-    if (server.ownerId !== req.userId) {
-      return res.status(403).json({ error: "Só o dono do servidor pode mudar o ícone." });
-    }
+    if (!server || !server.members.includes(req.userId)) return res.status(403).json({ error: "Sem acesso." });
+    if (server.ownerId !== req.userId) return res.status(403).json({ error: "Só o dono pode mudar." });
     const { iconDataUrl } = req.body || {};
-    if (typeof iconDataUrl === "string") {
-      if (!iconDataUrl.startsWith("data:image/")) {
-        return res.status(400).json({ error: "Imagem inválida." });
-      }
-      server.iconDataUrl = iconDataUrl;
-      persist();
-    }
+    if (typeof iconDataUrl === "string" && iconDataUrl.startsWith("data:image/")) { server.iconDataUrl = iconDataUrl; persist(); }
     res.json(serverWithChannels(server, req.userId));
   });
 
   app.get("/api/servers/:serverId/members", requireAuth, (req, res) => {
     const server = db.servers.find((s) => s.id === req.params.serverId);
-    if (!server || !server.members.includes(req.userId)) {
-      return res.status(403).json({ error: "Você não faz parte desse servidor." });
-    }
-    const members = server.members
-      .map((id) => db.users.find((u) => u.id === id))
-      .filter(Boolean)
-      .map(publicUser);
-    res.json(members);
+    if (!server || !server.members.includes(req.userId)) return res.status(403).json({ error: "Sem acesso." });
+    res.json(server.members.map((id) => db.users.find((u) => u.id === id)).filter(Boolean).map(publicUser));
   });
 
   app.post("/api/servers/:serverId/channels", requireAuth, (req, res) => {
     const server = db.servers.find((s) => s.id === req.params.serverId);
-    if (!server || !server.members.includes(req.userId)) {
-      return res.status(403).json({ error: "Você não faz parte desse servidor." });
-    }
+    if (!server || !server.members.includes(req.userId)) return res.status(403).json({ error: "Sem acesso." });
     const { name, categoryId, type } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome ao canal." });
-
-    const channel = {
-      id: crypto.randomUUID(),
-      serverId: server.id,
-      name: name.trim(),
-      categoryId: categoryId || null,
-      type: type === "voice" ? "voice" : "text",
-    };
+    const channel = { id: crypto.randomUUID(), serverId: server.id, name: name.trim(), categoryId: categoryId || null, type: type === "voice" ? "voice" : "text" };
     db.channels.push(channel);
     persist();
     res.json(channel);
@@ -301,22 +187,12 @@ async function startServer(port = 3000) {
 
   app.post("/api/servers/:serverId/categories", requireAuth, (req, res) => {
     const server = db.servers.find((s) => s.id === req.params.serverId);
-    if (!server || !server.members.includes(req.userId)) {
-      return res.status(403).json({ error: "Você não faz parte desse servidor." });
-    }
+    if (!server || !server.members.includes(req.userId)) return res.status(403).json({ error: "Sem acesso." });
     const { name, private: isPrivate, allowedUserIds } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome à categoria." });
-
-    const category = {
-      id: crypto.randomUUID(),
-      serverId: server.id,
-      name: name.trim(),
-      private: !!isPrivate,
-      allowedUserIds: isPrivate && Array.isArray(allowedUserIds) ? allowedUserIds : [],
-    };
-    db.categories.push(category);
+    db.categories.push({ id: crypto.randomUUID(), serverId: server.id, name: name.trim(), private: !!isPrivate, allowedUserIds: isPrivate && Array.isArray(allowedUserIds) ? allowedUserIds : [] });
     persist();
-    res.json(category);
+    res.json({ ok: true });
   });
 
   app.post("/api/channels/:channelId/mute", requireAuth, (req, res) => {
@@ -324,122 +200,64 @@ async function startServer(port = 3000) {
     if (!channel) return res.status(404).json({ error: "Canal não encontrado." });
     const user = db.users.find((u) => u.id === req.userId);
     if (!user.mutedChannelIds) user.mutedChannelIds = [];
-
     const idx = user.mutedChannelIds.indexOf(req.params.channelId);
-    let muted;
-    if (idx === -1) {
-      user.mutedChannelIds.push(req.params.channelId);
-      muted = true;
-    } else {
-      user.mutedChannelIds.splice(idx, 1);
-      muted = false;
-    }
+    if (idx === -1) user.mutedChannelIds.push(req.params.channelId);
+    else user.mutedChannelIds.splice(idx, 1);
     persist();
-    res.json({ muted });
+    res.json({ muted: idx === -1 });
   });
 
   app.delete("/api/channels/:channelId", requireAuth, (req, res) => {
     const channel = db.channels.find((c) => c.id === req.params.channelId);
     if (!channel) return res.status(404).json({ error: "Canal não encontrado." });
     const server = db.servers.find((s) => s.id === channel.serverId);
-    if (!server || server.ownerId !== req.userId) {
-      return res.status(403).json({ error: "Só o dono do servidor pode excluir canais." });
-    }
+    if (!server || server.ownerId !== req.userId) return res.status(403).json({ error: "Só o dono pode excluir." });
     db.channels = db.channels.filter((c) => c.id !== req.params.channelId);
-    deleteChannelMessages(req.params.channelId)
-      .then(async (videoIds) => {
-        for (const id of videoIds) await deleteMediaIfUnused(id);
-      })
-      .catch((err) => console.error("Erro ao apagar mensagens do canal:", err.message));
+    deleteChannelMessages(req.params.channelId).then(async (videoIds) => { for (const id of videoIds) await deleteMediaIfUnused(id); }).catch((err) => console.error(err.message));
     persist();
     res.json({ ok: true });
   });
 
   app.delete("/api/servers/:serverId/categories/:categoryId", requireAuth, (req, res) => {
     const server = db.servers.find((s) => s.id === req.params.serverId);
-    if (!server || server.ownerId !== req.userId) {
-      return res.status(403).json({ error: "Só o dono do servidor pode excluir categorias." });
-    }
+    if (!server || server.ownerId !== req.userId) return res.status(403).json({ error: "Só o dono pode excluir." });
     db.categories = db.categories.filter((c) => c.id !== req.params.categoryId);
-    for (const channel of db.channels) {
-      if (channel.categoryId === req.params.categoryId) channel.categoryId = null;
-    }
+    for (const channel of db.channels) { if (channel.categoryId === req.params.categoryId) channel.categoryId = null; }
     persist();
     res.json({ ok: true });
   });
 
-  // ---------- Amigos ----------
-
   app.get("/api/friends", requireAuth, (req, res) => {
     const myId = req.userId;
-    const accepted = db.friendRequests.filter(
-      (r) => r.status === "accepted" && (r.fromUserId === myId || r.toUserId === myId)
-    );
+    const accepted = db.friendRequests.filter((r) => r.status === "accepted" && (r.fromUserId === myId || r.toUserId === myId));
     const friends = accepted.map((r) => {
       const otherId = r.fromUserId === myId ? r.toUserId : r.fromUserId;
-      const otherUser = db.users.find((u) => u.id === otherId);
-      return otherUser ? publicUser(otherUser) : null;
-    }).filter(Boolean);
-
-    const incoming = db.friendRequests
-      .filter((r) => r.status === "pending" && r.toUserId === myId)
-      .map((r) => {
-        const fromUser = db.users.find((u) => u.id === r.fromUserId);
-        return { requestId: r.id, user: fromUser ? publicUser(fromUser) : null };
-      })
-      .filter((r) => r.user);
-
-    const outgoing = db.friendRequests
-      .filter((r) => r.status === "pending" && r.fromUserId === myId)
-      .map((r) => {
-        const toUser = db.users.find((u) => u.id === r.toUserId);
-        return { requestId: r.id, user: toUser ? publicUser(toUser) : null };
-      })
-      .filter((r) => r.user);
-
+      return db.users.find((u) => u.id === otherId);
+    }).filter(Boolean).map(publicUser);
+    const incoming = db.friendRequests.filter((r) => r.status === "pending" && r.toUserId === myId).map((r) => ({ requestId: r.id, user: db.users.find((u) => u.id === r.fromUserId) })).filter((r) => r.user).map(r => ({ ...r, user: publicUser(r.user) }));
+    const outgoing = db.friendRequests.filter((r) => r.status === "pending" && r.fromUserId === myId).map((r) => ({ requestId: r.id, user: db.users.find((u) => u.id === r.toUserId) })).filter((r) => r.user).map(r => ({ ...r, user: publicUser(r.user) }));
     res.json({ friends, incoming, outgoing });
   });
 
   app.post("/api/friends/request", requireAuth, (req, res) => {
     const { username } = req.body || {};
-    const target = db.users.find(
-      (u) => u.username.toLowerCase() === (username || "").trim().toLowerCase()
-    );
+    const target = db.users.find((u) => u.username.toLowerCase() === (username || "").trim().toLowerCase());
     if (!target) return res.status(404).json({ error: "Usuário não encontrado." });
     if (target.id === req.userId) return res.status(400).json({ error: "Você não pode adicionar você mesmo." });
-
-    const existing = db.friendRequests.find(
-      (r) =>
-        ((r.fromUserId === req.userId && r.toUserId === target.id) ||
-          (r.fromUserId === target.id && r.toUserId === req.userId)) &&
-        r.status !== "declined"
-    );
+    const existing = db.friendRequests.find((r) => ((r.fromUserId === req.userId && r.toUserId === target.id) || (r.fromUserId === target.id && r.toUserId === req.userId)) && r.status !== "declined");
     if (existing) {
       if (existing.status === "accepted") return res.status(400).json({ error: "Vocês já são amigos." });
-      if (existing.fromUserId === target.id) {
-        existing.status = "accepted";
-        persist();
-        return res.json({ ok: true, autoAccepted: true });
-      }
-      return res.status(400).json({ error: "Pedido já enviado, aguardando resposta." });
+      if (existing.fromUserId === target.id) { existing.status = "accepted"; persist(); return res.json({ ok: true, autoAccepted: true }); }
+      return res.status(400).json({ error: "Pedido já enviado." });
     }
-
-    db.friendRequests.push({
-      id: crypto.randomUUID(),
-      fromUserId: req.userId,
-      toUserId: target.id,
-      status: "pending",
-      createdAt: Date.now(),
-    });
+    db.friendRequests.push({ id: crypto.randomUUID(), fromUserId: req.userId, toUserId: target.id, status: "pending", createdAt: Date.now() });
     persist();
     res.json({ ok: true });
   });
 
   app.post("/api/friends/:requestId/accept", requireAuth, (req, res) => {
     const request = db.friendRequests.find((r) => r.id === req.params.requestId);
-    if (!request || request.toUserId !== req.userId || request.status !== "pending") {
-      return res.status(404).json({ error: "Pedido não encontrado." });
-    }
+    if (!request || request.toUserId !== req.userId || request.status !== "pending") return res.status(404).json({ error: "Pedido não encontrado." });
     request.status = "accepted";
     persist();
     res.json({ ok: true });
@@ -447,170 +265,103 @@ async function startServer(port = 3000) {
 
   app.post("/api/friends/:requestId/decline", requireAuth, (req, res) => {
     const request = db.friendRequests.find((r) => r.id === req.params.requestId);
-    if (!request || (request.toUserId !== req.userId && request.fromUserId !== req.userId)) {
-      return res.status(404).json({ error: "Pedido não encontrado." });
-    }
+    if (!request || (request.toUserId !== req.userId && request.fromUserId !== req.userId)) return res.status(404).json({ error: "Pedido não encontrado." });
     db.friendRequests = db.friendRequests.filter((r) => r.id !== req.params.requestId);
     persist();
     res.json({ ok: true });
   });
 
-
-
   function channelIfMember(channelId, userId) {
     const channel = db.channels.find((c) => c.id === channelId);
     if (channel) {
       const server = db.servers.find((s) => s.id === channel.serverId);
-      if (!server || !server.members.includes(userId)) return null;
-      return channel;
+      return (server && server.members.includes(userId)) ? channel : null;
     }
     const dm = db.dmChannels.find((d) => d.id === channelId);
-    if (dm && dm.userIds.includes(userId)) return dm;
-    return null;
+    return (dm && dm.userIds.includes(userId)) ? dm : null;
   }
 
   app.post("/api/friends/:friendUserId/dm", requireAuth, (req, res) => {
     const friendId = req.params.friendUserId;
-    const areFriends = db.friendRequests.some(
-      (r) =>
-        r.status === "accepted" &&
-        ((r.fromUserId === req.userId && r.toUserId === friendId) ||
-          (r.fromUserId === friendId && r.toUserId === req.userId))
-    );
+    const areFriends = db.friendRequests.some((r) => r.status === "accepted" && ((r.fromUserId === req.userId && r.toUserId === friendId) || (r.fromUserId === friendId && r.toUserId === req.userId)));
     if (!areFriends) return res.status(403).json({ error: "Vocês não são amigos." });
-
-    let dm = db.dmChannels.find(
-      (d) => d.userIds.includes(req.userId) && d.userIds.includes(friendId)
-    );
-    if (!dm) {
-      dm = { id: crypto.randomUUID(), userIds: [req.userId, friendId] };
-      db.dmChannels.push(dm);
-      persist();
-    }
-    const friendUser = db.users.find((u) => u.id === friendId);
-    res.json({ channelId: dm.id, friend: friendUser ? publicUser(friendUser) : null });
+    let dm = db.dmChannels.find((d) => d.userIds.includes(req.userId) && d.userIds.includes(friendId));
+    if (!dm) { dm = { id: crypto.randomUUID(), userIds: [req.userId, friendId] }; db.dmChannels.push(dm); persist(); }
+    res.json({ channelId: dm.id, friend: publicUser(db.users.find((u) => u.id === friendId)) });
   });
 
   app.get("/api/channels/:channelId/messages", requireAuth, async (req, res) => {
-    if (!channelIfMember(req.params.channelId, req.userId)) {
-      return res.status(403).json({ error: "Você não tem acesso a esse canal." });
-    }
+    if (!channelIfMember(req.params.channelId, req.userId)) return res.status(403).json({ error: "Sem acesso." });
     try {
       const msgs = await getChannelMessages(req.params.channelId, 100);
       res.json(msgs);
-    } catch (err) {
-      console.error("Erro ao carregar mensagens:", err.message);
-      res.status(500).json({ error: "Não foi possível carregar as mensagens." });
-    }
+    } catch (err) { res.status(500).json({ error: "Erro ao carregar mensagens." }); }
   });
 
   app.patch("/api/messages/:messageId", requireAuth, async (req, res) => {
     try {
       const message = await getMessage(req.params.messageId);
-      if (!message) return res.status(404).json({ error: "Mensagem não encontrada." });
-      if (message.userId !== req.userId) return res.status(403).json({ error: "Você só pode editar suas próprias mensagens." });
-
+      if (!message || message.userId !== req.userId) return res.status(403).json({ error: "Sem permissão." });
       const { text } = req.body || {};
-      if (typeof text !== "string" || !text.trim()) {
-        return res.status(400).json({ error: "A mensagem não pode ficar vazia." });
-      }
+      if (typeof text !== "string" || !text.trim()) return res.status(400).json({ error: "Vazio." });
       const fields = { text: text.trim().slice(0, 2000), editedAt: Date.now() };
       await updateMessage(message.id, fields);
       Object.assign(message, fields);
-
       const subs = chatSubscribers.get(message.channelId);
       if (subs) for (const peer of subs) send(peer, { type: "message-edited", message });
       res.json(message);
-    } catch (err) {
-      console.error("Erro ao editar mensagem:", err.message);
-      res.status(500).json({ error: "Não foi possível editar a mensagem." });
-    }
+    } catch (err) { res.status(500).json({ error: "Erro." }); }
   });
 
   app.delete("/api/messages/:messageId", requireAuth, async (req, res) => {
     try {
       const message = await getMessage(req.params.messageId);
-      if (!message) return res.status(404).json({ error: "Mensagem não encontrada." });
-      if (message.userId !== req.userId) return res.status(403).json({ error: "Você só pode excluir suas próprias mensagens." });
-
+      if (!message || message.userId !== req.userId) return res.status(403).json({ error: "Sem permissão." });
       await deleteMessageById(message.id);
-      if (message.videoId) {
-        deleteMediaIfUnused(message.videoId).catch((err) => console.error("Erro ao limpar vídeo:", err.message));
-      }
-
+      if (message.videoId) deleteMediaIfUnused(message.videoId).catch(() => {});
+      if (message.fileId) deleteMediaIfUnused(message.fileId).catch(() => {});
       const subs = chatSubscribers.get(message.channelId);
       if (subs) for (const peer of subs) send(peer, { type: "message-deleted", messageId: message.id, channelId: message.channelId });
       res.json({ ok: true });
-    } catch (err) {
-      console.error("Erro ao excluir mensagem:", err.message);
-      res.status(500).json({ error: "Não foi possível excluir a mensagem." });
-    }
+    } catch (err) { res.status(500).json({ error: "Erro." }); }
   });
 
   app.post("/api/channels/:channelId/forward", requireAuth, async (req, res) => {
-    if (!channelIfMember(req.params.channelId, req.userId)) {
-      return res.status(403).json({ error: "Você não tem acesso a esse canal." });
-    }
-    const { text, imageDataUrl, audioDataUrl, videoId } = req.body || {};
-    const message = await createChatMessage(req.params.channelId, req.userId, { text, imageDataUrl, audioDataUrl, videoId });
+    if (!channelIfMember(req.params.channelId, req.userId)) return res.status(403).json({ error: "Sem acesso." });
+    const { text, imageDataUrl, audioDataUrl, videoId, fileId, fileName } = req.body || {};
+    const message = await createChatMessage(req.params.channelId, req.userId, { text, imageDataUrl, audioDataUrl, videoId, fileId, fileName });
     if (!message) return res.status(400).json({ error: "Nada para encaminhar." });
     res.json(message);
   });
 
-  // ---------- Vídeos ----------
-
-  const MAX_VIDEO_BYTES = 10 * 1024 * 1024;
-  const ALLOWED_VIDEO_TYPES = /^video\/(mp4|webm|quicktime|ogg)$/;
-
+  // ---------- ARQUIVOS E VÍDEOS ----------
+  const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15MB
+  
   app.post(
     "/api/channels/:channelId/media",
     requireAuth,
-    express.raw({ type: () => true, limit: MAX_VIDEO_BYTES }),
+    express.raw({ type: () => true, limit: MAX_FILE_BYTES }),
     async (req, res) => {
-      if (!channelIfMember(req.params.channelId, req.userId)) {
-        return res.status(403).json({ error: "Você não tem acesso a esse canal." });
-      }
+      if (!channelIfMember(req.params.channelId, req.userId)) return res.status(403).json({ error: "Sem acesso." });
       const contentType = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
-      if (!ALLOWED_VIDEO_TYPES.test(contentType)) {
-        return res.status(400).json({ error: "Formato de vídeo não suportado. Use MP4 ou WebM." });
-      }
       const body = req.body;
-      if (!Buffer.isBuffer(body) || body.length === 0) {
-        return res.status(400).json({ error: "O vídeo está vazio." });
-      }
-      if (body.length > MAX_VIDEO_BYTES) {
-        return res.status(413).json({ error: "Vídeo grande demais (limite: 10 MB)." });
-      }
+      if (!Buffer.isBuffer(body) || body.length === 0) return res.status(400).json({ error: "Arquivo vazio." });
+      if (body.length > MAX_FILE_BYTES) return res.status(413).json({ error: "Arquivo grande demais (limite: 15 MB)." });
+      
       try {
         const id = crypto.randomUUID();
-        await insertMedia({
-          id,
-          ownerId: req.userId,
-          channelId: req.params.channelId,
-          contentType,
-          size: body.length,
-          dataB64: body.toString("base64"),
-        });
-        res.json({ videoId: id, size: body.length });
-      } catch (err) {
-        console.error("Erro ao salvar vídeo:", err.message);
-        res.status(500).json({ error: "Não foi possível salvar o vídeo." });
-      }
+        await insertMedia({ id, ownerId: req.userId, channelId: req.params.channelId, contentType, size: body.length, dataB64: body.toString("base64") });
+        res.json({ mediaId: id, size: body.length });
+      } catch (err) { res.status(500).json({ error: "Erro ao salvar arquivo." }); }
     }
   );
 
   function parseRange(header, size) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(header || "");
     if (!m || (m[1] === "" && m[2] === "")) return null;
-    let start;
-    let end;
-    if (m[1] === "") {
-      start = Math.max(size - parseInt(m[2], 10), 0);
-      end = size - 1;
-    } else {
-      start = parseInt(m[1], 10);
-      end = m[2] === "" ? size - 1 : Math.min(parseInt(m[2], 10), size - 1);
-    }
+    let start, end;
+    if (m[1] === "") { start = Math.max(size - parseInt(m[2], 10), 0); end = size - 1; } 
+    else { start = parseInt(m[1], 10); end = m[2] === "" ? size - 1 : Math.min(parseInt(m[2], 10), size - 1); }
     if (start > end || start >= size) return "invalid";
     return { start, end };
   }
@@ -621,22 +372,16 @@ async function startServer(port = 3000) {
     if (!userId) return res.status(401).json({ error: "Não autenticado." });
     try {
       const media = await getMediaData(req.params.mediaId);
-      if (!media) return res.status(404).json({ error: "Vídeo não encontrado." });
-      if (!media.channelIds.some((cid) => channelIfMember(cid, userId))) {
-        return res.status(403).json({ error: "Você não tem acesso a esse vídeo." });
-      }
-
+      if (!media) return res.status(404).json({ error: "Arquivo não encontrado." });
+      if (!media.channelIds.some((cid) => channelIfMember(cid, userId))) return res.status(403).json({ error: "Sem acesso." });
+      
       const size = media.buffer.length;
       res.setHeader("Content-Type", media.contentType);
       res.setHeader("Accept-Ranges", "bytes");
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Cache-Control", "private, max-age=3600");
-
       const range = parseRange(req.headers.range, size);
-      if (range === "invalid") {
-        res.setHeader("Content-Range", `bytes */${size}`);
-        return res.status(416).end();
-      }
+      if (range === "invalid") { res.setHeader("Content-Range", `bytes */${size}`); return res.status(416).end(); }
       if (range) {
         res.setHeader("Content-Range", `bytes ${range.start}-${range.end}/${size}`);
         res.setHeader("Content-Length", String(range.end - range.start + 1));
@@ -644,39 +389,24 @@ async function startServer(port = 3000) {
       }
       res.setHeader("Content-Length", String(size));
       res.status(200).end(media.buffer);
-    } catch (err) {
-      console.error("Erro ao carregar vídeo:", err.message);
-      res.status(500).json({ error: "Não foi possível carregar o vídeo." });
-    }
+    } catch (err) { res.status(500).json({ error: "Erro." }); }
   });
-
-  // ---------- WebSocket ----------
 
   app.use((err, req, res, next) => {
     console.error("Erro não tratado:", err);
-    const status = err.status || err.statusCode || 500;
-    res.status(status).json({
-      error: status === 413 ? "Arquivo grande demais." : "Algo deu errado no servidor. Tenta de novo.",
-    });
+    res.status(err.status || 500).json({ error: "Algo deu errado no servidor." });
   });
 
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
-
   const callRooms = new Map();
   const chatSubscribers = new Map();
 
-  function send(ws, msg) {
-    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
-  }
-
+  function send(ws, msg) { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg)); }
   let lastMessageTime = 0;
-  function nextMessageTime() {
-    lastMessageTime = Math.max(Date.now(), lastMessageTime + 1);
-    return lastMessageTime;
-  }
+  function nextMessageTime() { lastMessageTime = Math.max(Date.now(), lastMessageTime + 1); return lastMessageTime; }
 
-  async function createChatMessage(channelId, userId, { text, imageDataUrl, audioDataUrl, videoId, replyToId }) {
+  async function createChatMessage(channelId, userId, { text, imageDataUrl, audioDataUrl, videoId, fileId, fileName, replyToId }) {
     try {
       const cleanText = (text || "").trim().slice(0, 2000);
       let cleanImage = null;
@@ -689,7 +419,14 @@ async function startServer(port = 3000) {
         const meta = await getMediaMeta(videoId);
         if (meta && meta.channelIds.some((cid) => channelIfMember(cid, userId))) cleanVideoId = videoId;
       }
-      if (!cleanText && !cleanImage && !cleanAudio && !cleanVideoId) return null;
+      
+      let cleanFileId = null;
+      if (typeof fileId === "string" && fileId) {
+        const meta = await getMediaMeta(fileId);
+        if (meta && meta.channelIds.some((cid) => channelIfMember(cid, userId))) cleanFileId = fileId;
+      }
+
+      if (!cleanText && !cleanImage && !cleanAudio && !cleanVideoId && !cleanFileId) return null;
 
       let replyTo = null;
       if (replyToId) {
@@ -699,100 +436,50 @@ async function startServer(port = 3000) {
 
       const author = db.users.find((u) => u.id === userId);
       const message = {
-        id: crypto.randomUUID(),
-        channelId,
-        userId,
+        id: crypto.randomUUID(), channelId, userId,
         username: author ? author.username : "?",
         avatarDataUrl: author ? author.avatarDataUrl || author.googlePicture || null : null,
-        text: cleanText,
-        imageDataUrl: cleanImage,
-        audioDataUrl: cleanAudio,
-        videoId: cleanVideoId,
-        replyTo,
-        createdAt: nextMessageTime(),
+        text: cleanText, imageDataUrl: cleanImage, audioDataUrl: cleanAudio,
+        videoId: cleanVideoId, fileId: cleanFileId, fileName: fileName || null,
+        replyTo, createdAt: nextMessageTime(),
       };
 
       if (cleanVideoId) await addMediaChannel(cleanVideoId, channelId);
+      if (cleanFileId) await addMediaChannel(cleanFileId, channelId);
       await insertMessage(message);
 
       const subs = chatSubscribers.get(channelId);
-      if (subs) {
-        for (const peer of subs) send(peer, { type: "chat-message", message });
-      }
+      if (subs) for (const peer of subs) send(peer, { type: "chat-message", message });
       return message;
-    } catch (err) {
-      console.error("Erro ao salvar mensagem:", err.message);
-      return null;
-    }
+    } catch (err) { return null; }
   }
 
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url, "http://localhost");
     const token = url.searchParams.get("token");
     const userId = sessions.get(token);
-    if (!userId) {
-      ws.close();
-      return;
-    }
+    if (!userId) { ws.close(); return; }
+    
     const author = db.users.find((u) => u.id === userId);
-    ws.userId = userId;
-    ws.username = author ? author.username : "?";
+    ws.userId = userId; ws.username = author ? author.username : "?";
     ws.avatarDataUrl = author ? author.avatarDataUrl || author.googlePicture || null : null;
-    ws.peerId = crypto.randomUUID();
-    ws.channelId = null;
+    ws.peerId = crypto.randomUUID(); ws.channelId = null;
 
     ws.on("message", (raw) => {
-      let msg;
-      try {
-        msg = JSON.parse(raw);
-      } catch {
-        return;
-      }
+      let msg; try { msg = JSON.parse(raw); } catch { return; }
 
       if (msg.type === "enter-channel") {
-        const validChannel = channelIfMember(msg.channelId, ws.userId);
-        if (!validChannel) return send(ws, { type: "error", message: "Canal não encontrado." });
-
+        if (!channelIfMember(msg.channelId, ws.userId)) return send(ws, { type: "error", message: "Canal não encontrado." });
         ws.channelId = msg.channelId;
-
-        let subs = chatSubscribers.get(msg.channelId);
-        if (!subs) {
-          subs = new Set();
-          chatSubscribers.set(msg.channelId, subs);
-        }
-        subs.add(ws);
-
-        let room = callRooms.get(msg.channelId);
-        if (!room) {
-          room = new Map();
-          callRooms.set(msg.channelId, room);
-        }
-
-        const existingPeers = [...room.values()].map((peer) => ({
-          id: peer.peerId,
-          username: peer.username,
-          avatarDataUrl: peer.avatarDataUrl,
-        }));
-
-        room.set(ws.peerId, ws);
-
-        send(ws, {
-          type: "entered",
-          channelId: msg.channelId,
-          selfId: ws.peerId,
-          peers: existingPeers,
-        });
-
-        for (const peer of room.values()) {
-          if (peer !== ws) {
-            send(peer, {
-              type: "peer-joined",
-              id: ws.peerId,
-              username: ws.username,
-              avatarDataUrl: ws.avatarDataUrl,
-            });
-          }
-        }
+        let subs = chatSubscribers.get(msg.channelId) || new Set();
+        subs.add(ws); chatSubscribers.set(msg.channelId, subs);
+        
+        let room = callRooms.get(msg.channelId) || new Map();
+        const existingPeers = [...room.values()].map((peer) => ({ id: peer.peerId, username: peer.username, avatarDataUrl: peer.avatarDataUrl }));
+        room.set(ws.peerId, ws); callRooms.set(msg.channelId, room);
+        
+        send(ws, { type: "entered", channelId: msg.channelId, selfId: ws.peerId, peers: existingPeers });
+        for (const peer of room.values()) { if (peer !== ws) send(peer, { type: "peer-joined", id: ws.peerId, username: ws.username, avatarDataUrl: ws.avatarDataUrl }); }
         return;
       }
 
@@ -804,45 +491,25 @@ async function startServer(port = 3000) {
 
       if (["offer", "answer", "ice-candidate"].includes(msg.type)) {
         const room = callRooms.get(ws.channelId);
-        if (!room) return;
-        const target = room.get(msg.target);
-        if (target) send(target, { ...msg, from: ws.peerId });
+        if (room) { const target = room.get(msg.target); if (target) send(target, { ...msg, from: ws.peerId }); }
       }
 
       if (msg.type === "screen-share-ended") {
         const room = callRooms.get(ws.channelId);
-        if (!room) return;
-        for (const peer of room.values()) {
-          if (peer !== ws) send(peer, { type: "screen-share-ended", from: ws.peerId });
-        }
+        if (room) for (const peer of room.values()) { if (peer !== ws) send(peer, { type: "screen-share-ended", from: ws.peerId }); }
       }
     });
 
     ws.on("close", () => {
       const room = callRooms.get(ws.channelId);
-      if (room) {
-        room.delete(ws.peerId);
-        for (const peer of room.values()) send(peer, { type: "peer-left", id: ws.peerId });
-        if (room.size === 0) callRooms.delete(ws.channelId);
-      }
+      if (room) { room.delete(ws.peerId); for (const peer of room.values()) send(peer, { type: "peer-left", id: ws.peerId }); if (room.size === 0) callRooms.delete(ws.channelId); }
       const subs = chatSubscribers.get(ws.channelId);
-      if (subs) {
-        subs.delete(ws);
-        if (subs.size === 0) chatSubscribers.delete(ws.channelId);
-      }
+      if (subs) { subs.delete(ws); if (subs.size === 0) chatSubscribers.delete(ws.channelId); }
     });
   });
 
-  return new Promise((resolve) => {
-    server.listen(port, () => {
-      console.log(`Servidor rodando em http://localhost:${port}`);
-      resolve(server);
-    });
-  });
+  return new Promise((resolve) => { server.listen(port, () => resolve(server)); });
 }
 
 module.exports = { startServer };
-
-if (require.main === module) {
-  startServer(process.env.PORT || 3000);
-}
+if (require.main === module) { startServer(process.env.PORT || 3000); }
