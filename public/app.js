@@ -181,7 +181,6 @@ let hideMutedChannels = localStorage.getItem("telalive-hide-muted") === "1";
 let pendingAvatarDataUrl = null;
 let pendingServerIconDataUrl = null;
 
-// Card de perfil
 const userCardModal = document.getElementById("user-card-modal");
 const userCardBanner = document.getElementById("user-card-banner");
 const userCardAvatar = document.getElementById("user-card-avatar");
@@ -253,42 +252,23 @@ function openUserCard(user) {
   if (!user) return;
   userCardName.textContent = user.username || "?";
   userCardAvatar.innerHTML = avatarHtml(user.username, user.avatarDataUrl);
-  if (user.bannerDataUrl) {
-    userCardBanner.style.backgroundImage = `url(${user.bannerDataUrl})`;
-  } else {
-    userCardBanner.style.backgroundImage = "";
-  }
-  if (user.pronouns) {
-    userCardPronouns.textContent = user.pronouns;
-    userCardPronouns.style.display = "block";
-  } else {
-    userCardPronouns.style.display = "none";
-  }
+  if (user.bannerDataUrl) userCardBanner.style.backgroundImage = `url(${user.bannerDataUrl})`;
+  else userCardBanner.style.backgroundImage = "";
+  if (user.pronouns) { userCardPronouns.textContent = user.pronouns; userCardPronouns.style.display = "block"; }
+  else userCardPronouns.style.display = "none";
   userCardBio.textContent = user.bio || "Sem bio.";
   userCardModal.classList.remove("hidden");
 }
-
-function closeUserCard() {
-  userCardModal.classList.add("hidden");
-}
-
+function closeUserCard() { userCardModal.classList.add("hidden"); }
 userCardClose.addEventListener("click", closeUserCard);
-userCardModal.addEventListener("click", (e) => {
-  if (e.target === userCardModal) closeUserCard();
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !userCardModal.classList.contains("hidden")) closeUserCard();
-});
+userCardModal.addEventListener("click", (e) => { if (e.target === userCardModal) closeUserCard(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !userCardModal.classList.contains("hidden")) closeUserCard(); });
 
 // ---------- Chamadas à API ----------
 async function api(path, options = {}) {
   const res = await fetch(path, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Algo deu errado.");
@@ -354,16 +334,9 @@ async function enterApp() {
   appScreen.style.display = "flex";
   updateProfileBtn();
   await loadServers();
-  
-  try {
-    const data = await api("/api/friends");
-    cachedFriendsForMention = data.friends;
-  } catch {}
 }
 
-function updateProfileBtn() {
-  profileBtn.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
-}
+function updateProfileBtn() { profileBtn.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl); }
 
 async function loadServers() {
   myServers = await api("/api/servers");
@@ -375,15 +348,10 @@ function renderServerRail() {
   for (const server of myServers) {
     const icon = document.createElement("div");
     icon.className = "server-icon" + (server.id === activeServerId ? " active" : "");
-    icon.innerHTML = server.iconDataUrl
-      ? `<img class="server-icon-img" src="${server.iconDataUrl}" alt="" />`
-      : escapeHtml(server.name.slice(0, 2).toUpperCase());
+    icon.innerHTML = server.iconDataUrl ? `<img class="server-icon-img" src="${server.iconDataUrl}" alt="" />` : escapeHtml(server.name.slice(0, 2).toUpperCase());
     icon.title = server.name;
     icon.addEventListener("click", () => selectServer(server.id));
-    icon.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      openServerContextMenu(server.id, e.clientX, e.clientY);
-    });
+    icon.addEventListener("contextmenu", (e) => { e.preventDefault(); openServerContextMenu(server.id, e.clientX, e.clientY); });
     serverRail.insertBefore(icon, addServerBtn);
   }
 }
@@ -405,15 +373,12 @@ function renderChannelList() {
   channelList.innerHTML = "";
   if (!server) {
     currentServerName.textContent = "Selecione um servidor";
-    inviteHint.classList.add("hidden");
-    addChannelBtn.classList.add("hidden");
-    editServerIconBtn.classList.add("hidden");
+    inviteHint.classList.add("hidden"); addChannelBtn.classList.add("hidden"); editServerIconBtn.classList.add("hidden");
     return;
   }
   currentServerName.textContent = server.name;
   inviteCodeEl.textContent = server.inviteCode;
-  inviteHint.classList.remove("hidden");
-  addChannelBtn.classList.remove("hidden");
+  inviteHint.classList.remove("hidden"); addChannelBtn.classList.remove("hidden");
   editServerIconBtn.classList.toggle("hidden", server.ownerId !== currentUser?.id);
 
   const categories = server.categories || [];
@@ -424,21 +389,15 @@ function renderChannelList() {
     if (channel.categoryId) {
       if (!channelsByCategory.has(channel.categoryId)) channelsByCategory.set(channel.categoryId, []);
       channelsByCategory.get(channel.categoryId).push(channel);
-    } else {
-      uncategorized.push(channel);
-    }
+    } else uncategorized.push(channel);
   }
 
   for (const channel of uncategorized) channelList.appendChild(renderChannelItem(channel));
-
   for (const category of categories) {
     const header = document.createElement("div");
     header.className = "category-header";
     header.innerHTML = `<span>${escapeHtml(category.name)}</span>`;
-    header.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      openItemContextMenu("category", category.id, e.clientX, e.clientY);
-    });
+    header.addEventListener("contextmenu", (e) => { e.preventDefault(); openItemContextMenu("category", category.id, e.clientX, e.clientY); });
     channelList.appendChild(header);
     const items = channelsByCategory.get(category.id) || [];
     for (const channel of items) channelList.appendChild(renderChannelItem(channel));
@@ -449,47 +408,22 @@ function renderChannelItem(channel) {
   const item = document.createElement("div");
   item.className = "channel-item" + (channel.id === activeChannelId ? " active" : "") + (channel.muted ? " muted" : "");
   item.dataset.channelId = channel.id;
-  item.innerHTML = `
-    <span class="hash">${channel.type === "voice" ? "🔊" : "#"}</span><span>${escapeHtml(channel.name)}</span>
-    <div class="channel-item-presence" id="presence-${channel.id}"></div>
-    <button class="mute-toggle" title="${channel.muted ? "Reativar" : "Silenciar"}">${channel.muted ? "🔇" : "🔊"}</button>
-  `;
-  item.addEventListener("click", (e) => {
-    if (e.target.closest(".mute-toggle")) return;
-    selectChannel(channel.id, channel.name);
-  });
-  item.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    openItemContextMenu("channel", channel.id, e.clientX, e.clientY);
-  });
-  item.querySelector(".mute-toggle").addEventListener("click", async (e) => {
-    e.stopPropagation();
-    await api(`/api/channels/${channel.id}/mute`, { method: "POST" });
-    await loadServers();
-    renderChannelList();
-  });
+  item.innerHTML = `<span class="hash">${channel.type === "voice" ? "🔊" : "#"}</span><span>${escapeHtml(channel.name)}</span><div class="channel-item-presence" id="presence-${channel.id}"></div><button class="mute-toggle" title="${channel.muted ? "Reativar" : "Silenciar"}">${channel.muted ? "🔇" : "🔊"}</button>`;
+  item.addEventListener("click", (e) => { if (e.target.closest(".mute-toggle")) return; selectChannel(channel.id, channel.name); });
+  item.addEventListener("contextmenu", (e) => { e.preventDefault(); openItemContextMenu("channel", channel.id, e.clientX, e.clientY); });
+  item.querySelector(".mute-toggle").addEventListener("click", async (e) => { e.stopPropagation(); await api(`/api/channels/${channel.id}/mute`, { method: "POST" }); await loadServers(); renderChannelList(); });
   return item;
 }
 
-function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
-}
+function escapeHtml(str) { const div = document.createElement("div"); div.textContent = str; return div.innerHTML; }
 
 inviteHint.addEventListener("click", () => {
   navigator.clipboard.writeText(inviteCodeEl.textContent);
   inviteHint.querySelector("strong").textContent = "copiado!";
-  setTimeout(() => {
-    const server = myServers.find((s) => s.id === activeServerId);
-    if (server) inviteCodeEl.textContent = server.inviteCode;
-  }, 1200);
+  setTimeout(() => { const server = myServers.find((s) => s.id === activeServerId); if (server) inviteCodeEl.textContent = server.inviteCode; }, 1200);
 });
 
-function showEmptyState() {
-  emptyState.classList.remove("hidden");
-  callView.classList.add("hidden");
-}
+function showEmptyState() { emptyState.classList.remove("hidden"); callView.classList.add("hidden"); }
 
 function selectChannel(channelId, channelName) {
   leaveCall();
@@ -501,8 +435,7 @@ function selectChannel(channelId, channelName) {
   waitingState.classList.remove("hidden");
   waitingText.textContent = "Aguardando alguém entrar no canal...";
   videoGrid.innerHTML = "";
-  shareBtn.classList.remove("hidden");
-  stopShareBtn.classList.add("hidden");
+  shareBtn.classList.remove("hidden"); stopShareBtn.classList.add("hidden");
   statusText.textContent = "Conectado ao canal";
 
   const server = myServers.find((s) => s.id === activeServerId);
@@ -510,14 +443,8 @@ function selectChannel(channelId, channelName) {
   activeChannelType = channel?.type === "voice" ? "voice" : "text";
   const callColumn = document.querySelector(".call-column");
   const chatColumn = document.querySelector(".chat-column");
-  if (activeChannelType === "voice") {
-    callColumn.style.display = "flex";
-    chatColumn.style.display = "none";
-  } else {
-    callColumn.style.display = "none";
-    chatColumn.style.display = "flex";
-    chatColumn.style.width = "100%";
-  }
+  if (activeChannelType === "voice") { callColumn.style.display = "flex"; chatColumn.style.display = "none"; }
+  else { callColumn.style.display = "none"; chatColumn.style.display = "flex"; chatColumn.style.width = "100%"; }
 
   loadMessageHistory(channelId);
   connectToChannel(channelId);
@@ -528,34 +455,29 @@ async function loadMessageHistory(channelId) {
   chatMessagesEl.innerHTML = "";
   try {
     const messages = await api(`/api/channels/${channelId}/messages`);
-    if (messages.length === 0) {
-      chatMessagesEl.innerHTML = '<p class="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>';
-    } else {
-      for (const msg of messages) appendChatMessage(msg);
-    }
-  } catch (err) {
-    console.error(err);
-  }
+    if (messages.length === 0) chatMessagesEl.innerHTML = '<p class="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>';
+    else for (const msg of messages) appendChatMessage(msg);
+  } catch (err) { console.error(err); }
 }
 
-// ---------- Checar destaque (listra amarela) ----------
 function shouldHighlightMessage(msg) {
-  if (!currentUser) return false;
-  if (msg.userId === currentUser.id) return false;
-
+  if (!currentUser || msg.userId === currentUser.id) return false;
   const rawText = (msg.text || "").toLowerCase();
-
-  // 1) @everyone
   if (rawText.includes("@everyone")) return true;
-
-  // 2) menção direta ao nome (aceitando espaços)
   const myUsername = (currentUser.username || "").toLowerCase();
   if (myUsername && rawText.includes(`@${myUsername}`)) return true;
-
-  // 3) resposta a mim
   if (msg.replyTo && msg.replyTo.username === currentUser.username) return true;
-
   return false;
+}
+
+// Formata o tamanho do arquivo pra ficar bonitinho (KB, MB)
+function formatBytes(bytes, decimals = 2) {
+  if (!+bytes) return '0 Bytes';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
 function appendChatMessage(msg) {
@@ -573,14 +495,31 @@ function appendChatMessage(msg) {
   let formattedText = "";
   if (msg.text) {
     let html = escapeHtml(msg.text);
-    html = html.replace(/@everyone/gi, '<span class="chat-mention">@everyone</span>');
     if (cachedFriendsForMention) {
       cachedFriendsForMention.forEach(f => {
         const safeName = f.username.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
         html = html.replace(new RegExp(`@${safeName}`, 'gi'), `<span class="chat-mention">@${f.username}</span>`);
       });
     }
+    html = html.replace(/@everyone/gi, '<span class="chat-mention">@everyone</span>');
     formattedText = html;
+  }
+
+  // --- NOVO: Arquivos genéricos ---
+  let fileHtml = "";
+  if (msg.fileId) {
+    const fileUrl = `/api/media/${encodeURIComponent(msg.fileId)}?token=${encodeURIComponent(token)}&download=1`;
+    const fileName = escapeHtml(msg.fileName || "Arquivo");
+    fileHtml = `
+      <a href="${fileUrl}" target="_blank" class="chat-file-attachment" title="Baixar arquivo">
+        <div class="chat-file-icon">📄</div>
+        <div class="chat-file-info">
+          <span class="chat-file-name">${fileName}</span>
+          <span class="chat-file-size">Clique para baixar</span>
+        </div>
+        <div class="chat-file-download-icon">⬇️</div>
+      </a>
+    `;
   }
 
   el.innerHTML = `
@@ -604,27 +543,21 @@ function appendChatMessage(msg) {
       ${msg.imageDataUrl ? `<img class="chat-msg-image" src="${msg.imageDataUrl}" alt="imagem" />` : ""}
       ${msg.audioDataUrl ? `<audio class="chat-msg-audio" controls src="${msg.audioDataUrl}"></audio>` : ""}
       ${msg.videoId ? `<video class="chat-msg-video" controls preload="metadata" src="/api/media/${encodeURIComponent(msg.videoId)}?token=${encodeURIComponent(token)}"></video>` : ""}
+      ${fileHtml}
     </div>
   `;
 
   el.querySelector('[data-user-id]').addEventListener("click", async () => {
-    if (msg.userId === currentUser?.id) {
-      openUserCard(currentUser);
-      return;
-    }
+    if (msg.userId === currentUser?.id) { openUserCard(currentUser); return; }
     try {
       const friends = await api("/api/friends");
       const friend = friends.friends.find((f) => f.id === msg.userId);
       if (friend) openUserCard(friend);
       else openUserCard({ id: msg.userId, username: msg.username, avatarDataUrl: msg.avatarDataUrl });
-    } catch {
-      openUserCard({ id: msg.userId, username: msg.username, avatarDataUrl: msg.avatarDataUrl });
-    }
+    } catch { openUserCard({ id: msg.userId, username: msg.username, avatarDataUrl: msg.avatarDataUrl }); }
   });
 
-  if (msg.imageDataUrl) {
-    el.querySelector(".chat-msg-image").addEventListener("click", () => openLightbox(msg.imageDataUrl));
-  }
+  if (msg.imageDataUrl) el.querySelector(".chat-msg-image").addEventListener("click", () => openLightbox(msg.imageDataUrl));
   el.querySelector('[data-action="reply"]').addEventListener("click", () => setReplyState(msg));
   el.querySelector('[data-action="forward"]').addEventListener("click", () => openForwardModal(msg));
   const editBtn = el.querySelector('[data-action="edit"]');
@@ -641,92 +574,94 @@ const lightbox = document.getElementById("lightbox");
 const lightboxImg = document.getElementById("lightbox-img");
 const lightboxClose = document.getElementById("lightbox-close");
 
-function openLightbox(src) {
-  lightboxImg.src = src;
-  lightbox.classList.remove("hidden");
-}
-function closeLightbox() {
-  lightbox.classList.add("hidden");
-  lightboxImg.removeAttribute("src");
-}
-lightbox.addEventListener("click", (e) => {
-  if (e.target !== lightboxImg) closeLightbox();
-});
+function openLightbox(src) { lightboxImg.src = src; lightbox.classList.remove("hidden"); }
+function closeLightbox() { lightbox.classList.add("hidden"); lightboxImg.removeAttribute("src"); }
+lightbox.addEventListener("click", (e) => { if (e.target !== lightboxImg) closeLightbox(); });
 lightboxClose.addEventListener("click", closeLightbox);
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !lightbox.classList.contains("hidden")) closeLightbox();
-});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !lightbox.classList.contains("hidden")) closeLightbox(); });
 
-// ---------- Enviar vídeo no chat ----------
-const MAX_CHAT_VIDEO_BYTES = 10 * 1024 * 1024;
+// ---------- Enviar vídeo e arquivo no chat ----------
+const MAX_CHAT_FILE_BYTES = 15 * 1024 * 1024;
 const chatVideoPreview = document.getElementById("chat-video-preview");
 const chatVideoPreviewPlayer = document.getElementById("chat-video-preview-player");
 const chatVideoPreviewRemove = document.getElementById("chat-video-preview-remove");
-let pendingChatVideoFile = null;
-let pendingChatVideoObjectUrl = null;
+let pendingChatFile = null; // Pode ser vídeo, pdf, zip, doc, etc.
+let pendingChatFileObjectUrl = null;
 let sendingChatMessage = false;
 
-function clearPendingChatVideo() {
-  if (pendingChatVideoObjectUrl) URL.revokeObjectURL(pendingChatVideoObjectUrl);
-  pendingChatVideoObjectUrl = null;
-  pendingChatVideoFile = null;
+function clearPendingChatFile() {
+  if (pendingChatFileObjectUrl) URL.revokeObjectURL(pendingChatFileObjectUrl);
+  pendingChatFileObjectUrl = null;
+  pendingChatFile = null;
   chatVideoPreview.classList.add("hidden");
   chatVideoPreviewPlayer.removeAttribute("src");
   chatVideoPreviewPlayer.load();
 }
 
+// Essa é a função que processa o input file
 async function setPendingChatFile(file) {
   if (!file) return;
 
   if (file.type.startsWith("image/")) {
-    clearPendingChatVideo();
+    clearPendingChatFile();
     await setPendingChatImage(file);
     return;
   }
 
-  if (file.type.startsWith("video/")) {
-    if (file.size > MAX_CHAT_VIDEO_BYTES) {
-      alert(`Esse vídeo tem ${(file.size / 1024 / 1024).toFixed(1)} MB. O limite é 10 MB.`);
-      chatImageInput.value = "";
-      return;
-    }
-    clearPendingChatImage();
-    if (pendingChatVideoObjectUrl) URL.revokeObjectURL(pendingChatVideoObjectUrl);
-    pendingChatVideoFile = file;
-    pendingChatVideoObjectUrl = URL.createObjectURL(file);
-    chatVideoPreviewPlayer.src = pendingChatVideoObjectUrl;
-    chatVideoPreview.classList.remove("hidden");
+  // Se for vídeo ou qualquer outro arquivo (PDF, ZIP, EXE, etc), mostra o preview
+  if (file.size > MAX_CHAT_FILE_BYTES) {
+    alert(`Esse arquivo tem ${(file.size / 1024 / 1024).toFixed(1)} MB. O limite é 15 MB.`);
+    chatImageInput.value = "";
     return;
   }
-
-  alert("Formato não suportado. Envie uma imagem ou um vídeo (MP4 ou WebM).");
-  chatImageInput.value = "";
+  
+  clearPendingChatImage();
+  if (pendingChatFileObjectUrl) URL.revokeObjectURL(pendingChatFileObjectUrl);
+  
+  pendingChatFile = file;
+  pendingChatFileObjectUrl = URL.createObjectURL(file);
+  
+  // Se for vídeo, tenta tocar no preview. Se não, mostra o nome.
+  if (file.type.startsWith("video/")) {
+    chatVideoPreviewPlayer.src = pendingChatFileObjectUrl;
+  } else {
+    chatVideoPreviewPlayer.src = "";
+    // O título do elemento vai mostrar o nome do arquivo
+    chatVideoPreviewPlayer.title = file.name;
+  }
+  
+  chatVideoPreview.classList.remove("hidden");
 }
 
-async function uploadChatVideo(file, channelId) {
+async function uploadChatFile(file, channelId) {
   const res = await fetch(`/api/channels/${channelId}/media`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": file.type },
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": file.type || "application/octet-stream" },
     body: file,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "Não foi possível enviar o vídeo.");
-  return data.videoId;
+  if (!res.ok) throw new Error(data.error || "Não foi possível enviar o arquivo.");
+  return data.mediaId;
 }
 
 async function sendChatMessage() {
   const text = chatInput.value.trim();
   const channelId = activeChannelId;
-  const hasMedia = pendingChatImageDataUrl || pendingChatAudioDataUrl || pendingChatVideoFile;
+  const hasMedia = pendingChatImageDataUrl || pendingChatAudioDataUrl || pendingChatFile;
   if ((!text && !hasMedia) || !ws || ws.readyState !== WebSocket.OPEN || !channelId || sendingChatMessage) return;
 
-  let videoId;
-  if (pendingChatVideoFile) {
+  let mediaId;
+  let isVideo = false;
+  let fileName = null;
+
+  if (pendingChatFile) {
     sendingChatMessage = true;
     chatSendBtn.disabled = true;
     chatSendBtn.textContent = "Enviando...";
     try {
-      videoId = await uploadChatVideo(pendingChatVideoFile, channelId);
+      mediaId = await uploadChatFile(pendingChatFile, channelId);
+      isVideo = pendingChatFile.type.startsWith("video/");
+      fileName = pendingChatFile.name;
     } catch (err) {
       alert(err.message);
       sendingChatMessage = false;
@@ -740,7 +675,7 @@ async function sendChatMessage() {
   }
 
   if (activeChannelId !== channelId || !ws || ws.readyState !== WebSocket.OPEN) {
-    alert("Você saiu do canal antes do vídeo terminar de enviar.");
+    alert("Você saiu do canal antes do arquivo terminar de enviar.");
     return;
   }
 
@@ -751,14 +686,16 @@ async function sendChatMessage() {
       text,
       imageDataUrl: pendingChatImageDataUrl || undefined,
       audioDataUrl: pendingChatAudioDataUrl || undefined,
-      videoId,
+      videoId: isVideo ? mediaId : undefined,
+      fileId: !isVideo ? mediaId : undefined,
+      fileName: !isVideo ? fileName : undefined,
       replyToId: replyingToMessage?.id || undefined,
     })
   );
 
   chatInput.value = "";
   clearPendingChatImage();
-  clearPendingChatVideo();
+  clearPendingChatFile();
   chatImageInput.value = "";
   pendingChatAudioDataUrl = null;
   chatAudioPreview.classList.add("hidden");
@@ -790,23 +727,18 @@ chatAttachBtn.addEventListener("click", () => chatImageInput.click());
 chatImageInput.addEventListener("change", () => setPendingChatFile(chatImageInput.files[0]));
 chatImagePreviewRemove.addEventListener("click", clearPendingChatImage);
 chatVideoPreviewRemove.addEventListener("click", () => {
-  clearPendingChatVideo();
+  clearPendingChatFile();
   chatImageInput.value = "";
 });
 
 // ---------- Gravar e enviar áudio ----------
 chatRecordBtn.addEventListener("click", async () => {
-  if (audioRecorder && audioRecorder.state === "recording") {
-    audioRecorder.stop();
-    return;
-  }
+  if (audioRecorder && audioRecorder.state === "recording") { audioRecorder.stop(); return; }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     audioRecorderChunks = [];
     audioRecorder = new MediaRecorder(stream);
-    audioRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioRecorderChunks.push(e.data);
-    };
+    audioRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioRecorderChunks.push(e.data); };
     audioRecorder.onstop = () => {
       stream.getTracks().forEach((t) => t.stop());
       const blob = new Blob(audioRecorderChunks, { type: "audio/webm" });
@@ -823,9 +755,7 @@ chatRecordBtn.addEventListener("click", async () => {
     audioRecorder.start();
     chatRecordBtn.classList.add("recording");
     chatRecordBtn.title = "Parar gravação";
-  } catch (err) {
-    console.error("Não foi possível acessar o microfone:", err);
-  }
+  } catch (err) { console.error("Não foi possível acessar o microfone:", err); }
 });
 
 chatAudioPreviewRemove.addEventListener("click", () => {
@@ -848,20 +778,11 @@ chatInput.addEventListener("paste", (e) => {
 // ---------- Menções com @ ----------
 async function getMentionOptions(query) {
   if (!cachedFriendsForMention) {
-    try {
-      const data = await api("/api/friends");
-      cachedFriendsForMention = data.friends;
-    } catch {
-      cachedFriendsForMention = [];
-    }
+    try { const data = await api("/api/friends"); cachedFriendsForMention = data.friends; } catch { cachedFriendsForMention = []; }
   }
-  
   const options = [{ everyone: true, label: "everyone" }, ...cachedFriendsForMention.map((f) => ({ user: f }))];
   const q = (query || "").toLowerCase();
-  return options.filter((o) => {
-    if (o.everyone) return "everyone".includes(q);
-    return (o.user.username || "").toLowerCase().includes(q);
-  });
+  return options.filter((o) => o.everyone ? "everyone".includes(q) : (o.user.username || "").toLowerCase().includes(q));
 }
 
 function getMentionQuery() {
@@ -873,28 +794,16 @@ function getMentionQuery() {
 
 async function updateMentionDropdown() {
   const query = getMentionQuery();
-  if (query === null) {
-    mentionDropdown.classList.add("hidden");
-    return;
-  }
-  
+  if (query === null) { mentionDropdown.classList.add("hidden"); return; }
   const options = await getMentionOptions(query);
-  
-  if (options.length === 0) {
-    mentionDropdown.classList.add("hidden");
-    return;
-  }
-  
+  if (options.length === 0) { mentionDropdown.classList.add("hidden"); return; }
   mentionActiveIndex = 0;
   mentionDropdown.innerHTML = "";
   options.forEach((opt, i) => {
     const item = document.createElement("div");
     item.className = "mention-item" + (i === 0 ? " active" : "");
-    if (opt.everyone) {
-      item.innerHTML = `<div class="mention-everyone">@</div><span>everyone</span>`;
-    } else {
-      item.innerHTML = `<div class="avatar">${avatarHtml(opt.user.username, opt.user.avatarDataUrl)}</div><span>${escapeHtml(opt.user.username)}</span>`;
-    }
+    if (opt.everyone) item.innerHTML = `<div class="mention-everyone">@</div><span>everyone</span>`;
+    else item.innerHTML = `<div class="avatar">${avatarHtml(opt.user.username, opt.user.avatarDataUrl)}</div><span>${escapeHtml(opt.user.username)}</span>`;
     item.addEventListener("click", () => applyMention(opt));
     mentionDropdown.appendChild(item);
   });
@@ -918,20 +827,10 @@ chatInput.addEventListener("keydown", (e) => {
   if (mentionDropdown.classList.contains("hidden")) return;
   const items = [...mentionDropdown.children];
   if (items.length === 0) return;
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    mentionActiveIndex = (mentionActiveIndex + 1) % items.length;
-    items.forEach((el, i) => el.classList.toggle("active", i === mentionActiveIndex));
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    mentionActiveIndex = (mentionActiveIndex - 1 + items.length) % items.length;
-    items.forEach((el, i) => el.classList.toggle("active", i === mentionActiveIndex));
-  } else if (e.key === "Enter" || e.key === "Tab") {
-    e.preventDefault();
-    items[mentionActiveIndex]?.click();
-  } else if (e.key === "Escape") {
-    mentionDropdown.classList.add("hidden");
-  }
+  if (e.key === "ArrowDown") { e.preventDefault(); mentionActiveIndex = (mentionActiveIndex + 1) % items.length; items.forEach((el, i) => el.classList.toggle("active", i === mentionActiveIndex)); } 
+  else if (e.key === "ArrowUp") { e.preventDefault(); mentionActiveIndex = (mentionActiveIndex - 1 + items.length) % items.length; items.forEach((el, i) => el.classList.toggle("active", i === mentionActiveIndex)); } 
+  else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); items[mentionActiveIndex]?.click(); } 
+  else if (e.key === "Escape") { mentionDropdown.classList.add("hidden"); }
 });
 
 // ---------- WebSocket + WebRTC ----------
@@ -939,39 +838,28 @@ function connectToChannel(channelId) {
   const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${wsProtocol}://${location.host}?token=${encodeURIComponent(token)}`);
 
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ type: "enter-channel", channelId }));
-  };
+  ws.onopen = () => { ws.send(JSON.stringify({ type: "enter-channel", channelId })); };
 
   ws.onmessage = async (event) => {
     const msg = JSON.parse(event.data);
-
     switch (msg.type) {
       case "entered": {
         selfPeerId = msg.selfId;
         knownPeers = new Map(msg.peers.map((p) => [p.id, { username: p.username, avatarDataUrl: p.avatarDataUrl }]));
-        updateWaitingText();
-        renderParticipantsBar();
+        updateWaitingText(); renderParticipantsBar();
         for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
         if (activeChannelType === "voice") await ensureMicJoined();
         break;
       }
-
       case "peer-joined": {
         knownPeers.set(msg.id, { username: msg.username, avatarDataUrl: msg.avatarDataUrl });
-        playJoinSound();
-        updateWaitingText();
-        renderParticipantsBar();
+        playJoinSound(); updateWaitingText(); renderParticipantsBar();
         await syncOutgoingTracksToPeer(msg.id);
         break;
       }
-
       case "offer": {
         let pcIn = pcsIn.get(msg.from);
-        if (!pcIn) {
-          pcIn = createPeerConnection(msg.from, "in");
-          pcsIn.set(msg.from, pcIn);
-        }
+        if (!pcIn) { pcIn = createPeerConnection(msg.from, "in"); pcsIn.set(msg.from, pcIn); }
         await pcIn.setRemoteDescription(new RTCSessionDescription(msg.sdp));
         await flushPendingIceCandidates(msg.from, pcIn);
         const answer = await pcIn.createAnswer();
@@ -979,83 +867,52 @@ function connectToChannel(channelId) {
         ws.send(JSON.stringify({ type: "answer", target: msg.from, sdp: answer }));
         break;
       }
-
       case "answer": {
         const pcOut = pcsOut.get(msg.from);
-        if (pcOut) {
-          await pcOut.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-          await flushPendingIceCandidates(msg.from, pcOut);
-        }
+        if (pcOut) { await pcOut.setRemoteDescription(new RTCSessionDescription(msg.sdp)); await flushPendingIceCandidates(msg.from, pcOut); }
         break;
       }
-
       case "ice-candidate": {
         if (!msg.candidate) break;
         const pc = pcsOut.get(msg.from) || pcsIn.get(msg.from);
         if (pc) {
-          if (pc.remoteDescription) {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-            } catch (err) {
-              console.error(err);
-            }
-          } else {
-            if (!pendingIceCandidates.has(msg.from)) pendingIceCandidates.set(msg.from, []);
-            pendingIceCandidates.get(msg.from).push(msg.candidate);
-          }
+          if (pc.remoteDescription) { try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch (err) { console.error(err); } } 
+          else { if (!pendingIceCandidates.has(msg.from)) pendingIceCandidates.set(msg.from, []); pendingIceCandidates.get(msg.from).push(msg.candidate); }
         }
         break;
       }
-
       case "peer-left": {
-        knownPeers.delete(msg.id);
-        closePeerConnections(msg.id);
-        removeVideoTile(msg.id);
-        cleanupPeerAudio(msg.id);
-        playLeaveSound();
-        updateWaitingText();
-        renderParticipantsBar();
+        knownPeers.delete(msg.id); closePeerConnections(msg.id); removeVideoTile(msg.id); cleanupPeerAudio(msg.id); playLeaveSound(); updateWaitingText(); renderParticipantsBar();
         break;
       }
-
-      case "screen-share-ended": {
-        removeVideoTile(msg.from);
-        break;
-      }
-
-      case "chat-message":
+      case "screen-share-ended": { removeVideoTile(msg.from); break; }
+      case "chat-message": {
         if (msg.message.userId !== currentUser?.id) playMessageSound();
         appendChatMessage(msg.message);
         break;
-
+      }
       case "message-edited": {
         const el = chatMessagesEl.querySelector(`[data-message-id="${msg.message.id}"]`);
         if (el) {
           const wrap = el.querySelector(".chat-msg-text-wrap");
           let formatted = escapeHtml(msg.message.text);
-          formatted = formatted.replace(/@everyone/gi, '<span class="chat-mention">@everyone</span>');
           if (cachedFriendsForMention) {
             cachedFriendsForMention.forEach(f => {
               const safeName = f.username.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
               formatted = formatted.replace(new RegExp(`@${safeName}`, 'gi'), `<span class="chat-mention">@${f.username}</span>`);
             });
           }
+          formatted = formatted.replace(/@everyone/gi, '<span class="chat-mention">@everyone</span>');
           wrap.innerHTML = `<div class="chat-msg-text">${formatted}</div>`;
-          
-          if (!el.querySelector(".chat-msg-edited-tag")) {
-            el.querySelector(".chat-msg-time").insertAdjacentHTML("afterend", '<span class="chat-msg-edited-tag">(editado)</span>');
-          }
+          if (!el.querySelector(".chat-msg-edited-tag")) el.querySelector(".chat-msg-time").insertAdjacentHTML("afterend", '<span class="chat-msg-edited-tag">(editado)</span>');
           el.classList.toggle("mentioned", shouldHighlightMessage(msg.message));
         }
         break;
       }
-
       case "message-deleted": {
         const el = chatMessagesEl.querySelector(`[data-message-id="${msg.messageId}"]`);
         if (el) el.remove();
-        if (chatMessagesEl.children.length === 0) {
-          chatMessagesEl.innerHTML = '<p class="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>';
-        }
+        if (chatMessagesEl.children.length === 0) chatMessagesEl.innerHTML = '<p class="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>';
         break;
       }
     }
@@ -1064,16 +921,12 @@ function connectToChannel(channelId) {
 
 function updateWaitingText() {
   const count = knownPeers.size;
-  if (count === 0) {
-    waitingText.textContent = "Você é a única pessoa aqui por enquanto...";
-  } else {
-    waitingText.textContent = `${count} pessoa${count > 1 ? "s" : ""} no canal. Clique em "Compartilhar minha tela" quando quiser.`;
-  }
+  if (count === 0) waitingText.textContent = "Você é a única pessoa aqui por enquanto...";
+  else waitingText.textContent = `${count} pessoa${count > 1 ? "s" : ""} no canal. Clique em "Compartilhar minha tela" quando quiser.`;
 }
 
 function renderParticipantsBar() {
   participantsCircleRow.innerHTML = "";
-
   const meCircle = document.createElement("div");
   meCircle.className = "participant-circle";
   meCircle.dataset.key = "me";
@@ -1092,13 +945,10 @@ function renderParticipantsBar() {
         const friend = friends.friends.find((f) => f.username === peer.username);
         if (friend) openUserCard(friend);
         else openUserCard({ username: peer.username, avatarDataUrl: peer.avatarDataUrl });
-      } catch {
-        openUserCard({ username: peer.username, avatarDataUrl: peer.avatarDataUrl });
-      }
+      } catch { openUserCard({ username: peer.username, avatarDataUrl: peer.avatarDataUrl }); }
     });
     participantsCircleRow.appendChild(circle);
   }
-
   updateChannelSidebarPresence();
 }
 
@@ -1107,18 +957,13 @@ function updateChannelSidebarPresence() {
   const holder = document.getElementById(`presence-${activeChannelId}`);
   if (!holder) return;
   holder.innerHTML = "";
-
   const meMini = document.createElement("div");
-  meMini.className = "mini-avatar";
-  meMini.title = "Você";
-  meMini.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
+  meMini.className = "mini-avatar"; meMini.title = "Você"; meMini.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
   holder.appendChild(meMini);
 
   for (const peer of knownPeers.values()) {
     const mini = document.createElement("div");
-    mini.className = "mini-avatar";
-    mini.title = peer.username;
-    mini.innerHTML = avatarHtml(peer.username, peer.avatarDataUrl);
+    mini.className = "mini-avatar"; mini.title = peer.username; mini.innerHTML = avatarHtml(peer.username, peer.avatarDataUrl);
     holder.appendChild(mini);
   }
 }
@@ -1127,54 +972,26 @@ async function flushPendingIceCandidates(peerId, pc) {
   const queued = pendingIceCandidates.get(peerId);
   if (!queued) return;
   pendingIceCandidates.delete(peerId);
-  for (const candidate of queued) {
-    try {
-      await pc.addIceCandidate(new RTCIceCandidate(candidate));
-    } catch (err) {
-      console.error(err);
-    }
-  }
+  for (const candidate of queued) { try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (err) { console.error(err); } }
 }
 
 function createPeerConnection(peerId, direction) {
   const conn = new RTCPeerConnection(rtcConfig);
-
-  conn.onicecandidate = (event) => {
-    if (event.candidate) {
-      ws.send(JSON.stringify({ type: "ice-candidate", target: peerId, candidate: event.candidate }));
-    }
-  };
-
+  conn.onicecandidate = (event) => { if (event.candidate) ws.send(JSON.stringify({ type: "ice-candidate", target: peerId, candidate: event.candidate })); };
   if (direction === "in") {
     conn.ontrack = (event) => {
       const stream = event.streams[0];
-      if (event.track.kind === "video") {
-        showVideoTile(peerId, knownPeers.get(peerId)?.username || "Alguém", stream);
-      } else if (event.track.kind === "audio" && stream.getVideoTracks().length === 0) {
-        playRemoteAudio(peerId, stream);
-        setupSpeakingDetector(stream, peerId);
-      }
+      if (event.track.kind === "video") showVideoTile(peerId, knownPeers.get(peerId)?.username || "Alguém", stream);
+      else if (event.track.kind === "audio" && stream.getVideoTracks().length === 0) { playRemoteAudio(peerId, stream); setupSpeakingDetector(stream, peerId); }
     };
   }
-
-  conn.onconnectionstatechange = () => {
-    if (conn.connectionState === "connected") {
-      statusText.textContent = "Transmitindo ao vivo";
-    }
-  };
-
+  conn.onconnectionstatechange = () => { if (conn.connectionState === "connected") statusText.textContent = "Transmitindo ao vivo"; };
   return conn;
 }
 
 function playRemoteAudio(peerId, stream) {
   let audioEl = document.getElementById(`audio-${peerId}`);
-  if (!audioEl) {
-    audioEl = document.createElement("audio");
-    audioEl.id = `audio-${peerId}`;
-    audioEl.autoplay = true;
-    audioEl.style.display = "none";
-    document.body.appendChild(audioEl);
-  }
+  if (!audioEl) { audioEl = document.createElement("audio"); audioEl.id = `audio-${peerId}`; audioEl.autoplay = true; audioEl.style.display = "none"; document.body.appendChild(audioEl); }
   audioEl.srcObject = stream;
   audioEl.muted = deafened;
 }
@@ -1192,15 +1009,12 @@ function showVideoTile(peerId, username, stream) {
   waitingState.classList.add("hidden");
   let tile = document.getElementById(`tile-${peerId}`);
   if (!tile) {
-    tile = document.createElement("div");
-    tile.className = "video-tile";
-    tile.id = `tile-${peerId}`;
+    tile = document.createElement("div"); tile.className = "video-tile"; tile.id = `tile-${peerId}`;
     tile.innerHTML = `<video autoplay playsinline></video><span class="video-tile-label">${escapeHtml(username)}</span>`;
     videoGrid.appendChild(tile);
   }
   const videoEl = tile.querySelector("video");
-  videoEl.srcObject = stream;
-  videoEl.muted = deafened;
+  videoEl.srcObject = stream; videoEl.muted = deafened;
 }
 
 function removeVideoTile(peerId) {
@@ -1216,109 +1030,52 @@ function cleanupPeerAudio(peerId) {
 }
 
 function closePeerConnections(peerId) {
-  const pOut = pcsOut.get(peerId);
-  if (pOut) {
-    pOut.close();
-    pcsOut.delete(peerId);
-  }
-  const pIn = pcsIn.get(peerId);
-  if (pIn) {
-    pIn.close();
-    pcsIn.delete(peerId);
-  }
+  const pOut = pcsOut.get(peerId); if (pOut) { pOut.close(); pcsOut.delete(peerId); }
+  const pIn = pcsIn.get(peerId); if (pIn) { pIn.close(); pcsIn.delete(peerId); }
 }
 
 async function syncOutgoingTracksToPeer(peerId) {
   let pc = pcsOut.get(peerId);
-  if (!pc) {
-    pc = createPeerConnection(peerId, "out");
-    pcsOut.set(peerId, pc);
-  }
-
+  if (!pc) { pc = createPeerConnection(peerId, "out"); pcsOut.set(peerId, pc); }
   const existingTrackIds = new Set(pc.getSenders().map((s) => s.track?.id).filter(Boolean));
   let addedAny = false;
-
-  if (localMicStream) {
-    for (const track of localMicStream.getTracks()) {
-      if (!existingTrackIds.has(track.id)) {
-        pc.addTrack(track, localMicStream);
-        addedAny = true;
-      }
-    }
-  }
-  if (localScreenStream) {
-    for (const track of localScreenStream.getTracks()) {
-      if (!existingTrackIds.has(track.id)) {
-        pc.addTrack(track, localScreenStream);
-        addedAny = true;
-      }
-    }
-  }
-
-  if (addedAny) {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
-  }
+  if (localMicStream) { for (const track of localMicStream.getTracks()) { if (!existingTrackIds.has(track.id)) { pc.addTrack(track, localMicStream); addedAny = true; } } }
+  if (localScreenStream) { for (const track of localScreenStream.getTracks()) { if (!existingTrackIds.has(track.id)) { pc.addTrack(track, localScreenStream); addedAny = true; } } }
+  if (addedAny) { const offer = await pc.createOffer(); await pc.setLocalDescription(offer); ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer })); }
 }
 
-// ---------- Detectar quem está falando ----------
 function setupSpeakingDetector(stream, key) {
   if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
   try {
     const source = audioContext.createMediaStreamSource(stream);
     const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.6;
-    source.connect(analyser);
+    analyser.fftSize = 512; analyser.smoothingTimeConstant = 0.6; source.connect(analyser);
     audioAnalysers.set(key, analyser);
-    if (!speakingLoopRunning) {
-      speakingLoopRunning = true;
-      requestAnimationFrame(speakingLoop);
-    }
-  } catch (err) {
-    console.error("Não foi possível analisar o áudio:", err);
-  }
+    if (!speakingLoopRunning) { speakingLoopRunning = true; requestAnimationFrame(speakingLoop); }
+  } catch (err) { console.error("Não foi possível analisar o áudio:", err); }
 }
 
-function removeSpeakingDetector(key) {
-  audioAnalysers.delete(key);
-}
+function removeSpeakingDetector(key) { audioAnalysers.delete(key); }
 
 function speakingLoop() {
   const data = new Uint8Array(256);
   for (const [key, analyser] of audioAnalysers) {
     analyser.getByteFrequencyData(data);
-    let sum = 0;
-    for (const v of data) sum += v;
+    let sum = 0; for (const v of data) sum += v;
     const isSpeaking = sum / data.length > 12;
-
     const circle = document.querySelector(`.participant-circle[data-key="${key}"] .avatar-lg`);
     if (circle) circle.classList.toggle("speaking", isSpeaking);
-
     const tile = document.getElementById(`tile-${key}`);
     if (tile) tile.classList.toggle("speaking", isSpeaking);
   }
   requestAnimationFrame(speakingLoop);
 }
 
-// ---------- Microfone ----------
 let noiseSuppressionProcessor = null;
-
 async function ensureMicJoined() {
   if (localMicStream) return;
   try {
-    const rawStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        sampleRate: { ideal: 48000 },
-        sampleSize: { ideal: 480 },
-        channelCount: { exact: 1 },
-      },
-    });
-
+    const rawStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, sampleRate: { ideal: 48000 }, sampleSize: { ideal: 480 }, channelCount: { exact: 1 } } });
     if (window.Shiguredo) {
       try {
         const assetsPath = "https://cdn.jsdelivr.net/npm/@shiguredo/noise-suppression@latest/dist";
@@ -1326,144 +1083,80 @@ async function ensureMicJoined() {
         const rawTrack = rawStream.getAudioTracks()[0];
         const processedTrack = await noiseSuppressionProcessor.startProcessing(rawTrack);
         localMicStream = new MediaStream([processedTrack]);
-      } catch (err) {
-        console.error("Redução de ruído por IA indisponível, usando áudio normal:", err);
-        localMicStream = rawStream;
-      }
-    } else {
-      localMicStream = rawStream;
-    }
-
+      } catch (err) { console.error("Redução de ruído por IA indisponível, usando áudio normal:", err); localMicStream = rawStream; }
+    } else localMicStream = rawStream;
     setupSpeakingDetector(localMicStream, "me");
     for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
-  } catch (err) {
-    console.error("Não foi possível acessar o microfone:", err);
-  }
+  } catch (err) { console.error("Não foi possível acessar o microfone:", err); }
 }
 
 micBtn.addEventListener("click", async () => {
-  if (!localMicStream) {
-    await ensureMicJoined();
-    micMuted = false;
-  } else {
-    micMuted = !micMuted;
-    for (const track of localMicStream.getTracks()) track.enabled = !micMuted;
-  }
-  micBtn.textContent = micMuted ? "🔇" : "🎤";
-  micBtn.classList.toggle("off", micMuted);
-  micBtn.title = micMuted ? "Ativar microfone" : "Mutar microfone";
+  if (!localMicStream) { await ensureMicJoined(); micMuted = false; } 
+  else { micMuted = !micMuted; for (const track of localMicStream.getTracks()) track.enabled = !micMuted; }
+  micBtn.textContent = micMuted ? "🔇" : "🎤"; micBtn.classList.toggle("off", micMuted);
 });
 
-// ---------- Compartilhar tela ----------
 shareBtn.addEventListener("click", async () => {
   try {
     localScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
-
     for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
-
-    shareBtn.classList.add("hidden");
-    stopShareBtn.classList.remove("hidden");
+    shareBtn.classList.add("hidden"); stopShareBtn.classList.remove("hidden");
     statusText.textContent = "Transmitindo sua tela";
-
     localScreenStream.getVideoTracks()[0].onended = () => stopSharing();
-  } catch (err) {
-    console.error(err);
-  }
+  } catch (err) { console.error(err); }
 });
 
 stopShareBtn.addEventListener("click", stopSharing);
-
 function stopSharing() {
   if (localScreenStream) {
     for (const track of localScreenStream.getTracks()) {
       track.stop();
-      for (const pc of pcsOut.values()) {
-        const sender = pc.getSenders().find((s) => s.track === track);
-        if (sender) pc.removeTrack(sender);
-      }
+      for (const pc of pcsOut.values()) { const sender = pc.getSenders().find((s) => s.track === track); if (sender) pc.removeTrack(sender); }
     }
   }
-  localScreenStream = null;
-  statusText.textContent = "Compartilhamento parado";
-  stopShareBtn.classList.add("hidden");
-  shareBtn.classList.remove("hidden");
+  localScreenStream = null; statusText.textContent = "Compartilhamento parado";
+  stopShareBtn.classList.add("hidden"); shareBtn.classList.remove("hidden");
   if (ws) ws.send(JSON.stringify({ type: "screen-share-ended" }));
 }
 
 leaveChannelBtn.addEventListener("click", () => {
-  leaveCall();
-  activeChannelId = null;
-  renderChannelList();
-  emptyState.classList.remove("hidden");
-  callView.classList.add("hidden");
+  leaveCall(); activeChannelId = null; renderChannelList();
+  emptyState.classList.remove("hidden"); callView.classList.add("hidden");
 });
 
 function leaveCall() {
   if (localScreenStream) for (const track of localScreenStream.getTracks()) track.stop();
   if (localMicStream) for (const track of localMicStream.getTracks()) track.stop();
-  if (noiseSuppressionProcessor) {
-    noiseSuppressionProcessor.stopProcessing();
-    noiseSuppressionProcessor = null;
-  }
+  if (noiseSuppressionProcessor) { noiseSuppressionProcessor.stopProcessing(); noiseSuppressionProcessor = null; }
   for (const pc of pcsOut.values()) pc.close();
   for (const pc of pcsIn.values()) pc.close();
   document.querySelectorAll('audio[id^="audio-"]').forEach((el) => el.remove());
-  audioAnalysers.clear();
-  pcsOut.clear();
-  pcsIn.clear();
-  knownPeers.clear();
+  audioAnalysers.clear(); pcsOut.clear(); pcsIn.clear(); knownPeers.clear();
   if (ws) ws.close();
-  ws = null;
-  localScreenStream = null;
-  localMicStream = null;
-  micMuted = false;
-  micBtn.textContent = "🎤";
-  micBtn.classList.remove("off");
-  selfPeerId = null;
+  ws = null; localScreenStream = null; localMicStream = null;
+  micMuted = false; micBtn.textContent = "🎤"; micBtn.classList.remove("off"); selfPeerId = null;
 }
 
 async function openDirectMessage(friendUser) {
   try {
     const data = await api(`/api/friends/${friendUser.id}/dm`, { method: "POST" });
-    leaveCall();
-    activeServerId = null;
-    activeChannelId = data.channelId;
-    activeChannelType = "dm";
-
-    friendsPanel.style.display = "none";
-    document.querySelector(".channel-panel").style.display = "none";
+    leaveCall(); activeServerId = null; activeChannelId = data.channelId; activeChannelType = "dm";
+    friendsPanel.style.display = "none"; document.querySelector(".channel-panel").style.display = "none";
     document.querySelector(".main-panel").style.display = "flex";
-    emptyState.classList.add("hidden");
-    callView.classList.remove("hidden");
-
+    emptyState.classList.add("hidden"); callView.classList.remove("hidden");
     activeChannelName.textContent = friendUser.username;
-    waitingState.classList.remove("hidden");
-    videoGrid.innerHTML = "";
-    shareBtn.classList.remove("hidden");
-    stopShareBtn.classList.add("hidden");
+    waitingState.classList.remove("hidden"); videoGrid.innerHTML = "";
+    shareBtn.classList.remove("hidden"); stopShareBtn.classList.add("hidden");
     statusText.textContent = "Conectado";
-
-    const callColumn = document.querySelector(".call-column");
-    const chatColumn = document.querySelector(".chat-column");
-    callColumn.style.display = "flex";
-    chatColumn.style.display = "flex";
-    chatColumn.style.width = "";
-
-    loadMessageHistory(activeChannelId);
-    connectToChannel(activeChannelId);
-    renderParticipantsBar();
-  } catch (err) {
-    alert(err.message);
-  }
+    const callColumn = document.querySelector(".call-column"); const chatColumn = document.querySelector(".chat-column");
+    callColumn.style.display = "flex"; chatColumn.style.display = "flex"; chatColumn.style.width = "";
+    loadMessageHistory(activeChannelId); connectToChannel(activeChannelId); renderParticipantsBar();
+  } catch (err) { alert(err.message); }
 }
 
-// ---------- Modal: criar/entrar em servidor ----------
 addServerBtn.addEventListener("click", () => {
-  serverModal.classList.remove("hidden");
-  serverModalStatus.textContent = "";
-  newServerName.value = "";
-  joinServerCode.value = "";
-  setServerTab("create");
+  serverModal.classList.remove("hidden"); serverModalStatus.textContent = "";
+  newServerName.value = ""; joinServerCode.value = ""; setServerTab("create");
 });
 
 function setServerTab(mode) {
@@ -1475,96 +1168,44 @@ function setServerTab(mode) {
 }
 tabCreateServer.addEventListener("click", () => setServerTab("create"));
 tabJoinServer.addEventListener("click", () => setServerTab("join"));
-
 serverModalCancel.addEventListener("click", () => serverModal.classList.add("hidden"));
 
 serverModalConfirm.addEventListener("click", async () => {
   serverModalStatus.textContent = "";
   try {
     let server;
-    if (serverModal.dataset.mode === "join") {
-      server = await api("/api/servers/join", {
-        method: "POST",
-        body: JSON.stringify({ inviteCode: joinServerCode.value.trim() }),
-      });
-    } else {
-      server = await api("/api/servers", {
-        method: "POST",
-        body: JSON.stringify({ name: newServerName.value.trim() }),
-      });
-    }
-    await loadServers();
-    serverModal.classList.add("hidden");
-    selectServer(server.id);
-  } catch (err) {
-    serverModalStatus.textContent = err.message;
-  }
+    if (serverModal.dataset.mode === "join") server = await api("/api/servers/join", { method: "POST", body: JSON.stringify({ inviteCode: joinServerCode.value.trim() }) });
+    else server = await api("/api/servers", { method: "POST", body: JSON.stringify({ name: newServerName.value.trim() }) });
+    await loadServers(); serverModal.classList.add("hidden"); selectServer(server.id);
+  } catch (err) { serverModalStatus.textContent = err.message; }
 });
 
-// ---------- Modal: criar canal ----------
 addChannelBtn.addEventListener("click", () => {
-  channelModal.classList.remove("hidden");
-  channelModalStatus.textContent = "";
-  newChannelName.value = "";
-  selectedChannelType = "text";
-  typeTextBtn.classList.add("active");
-  typeVoiceBtn.classList.remove("active");
+  channelModal.classList.remove("hidden"); channelModalStatus.textContent = ""; newChannelName.value = "";
+  selectedChannelType = "text"; typeTextBtn.classList.add("active"); typeVoiceBtn.classList.remove("active");
   const server = myServers.find((s) => s.id === activeServerId);
   newChannelCategory.innerHTML = '<option value="">Sem categoria</option>';
-  for (const cat of server?.categories || []) {
-    const opt = document.createElement("option");
-    opt.value = cat.id;
-    opt.textContent = cat.name;
-    newChannelCategory.appendChild(opt);
-  }
+  for (const cat of server?.categories || []) { const opt = document.createElement("option"); opt.value = cat.id; opt.textContent = cat.name; newChannelCategory.appendChild(opt); }
 });
 
-typeTextBtn.addEventListener("click", () => {
-  selectedChannelType = "text";
-  typeTextBtn.classList.add("active");
-  typeVoiceBtn.classList.remove("active");
-});
-typeVoiceBtn.addEventListener("click", () => {
-  selectedChannelType = "voice";
-  typeVoiceBtn.classList.add("active");
-  typeTextBtn.classList.remove("active");
-});
+typeTextBtn.addEventListener("click", () => { selectedChannelType = "text"; typeTextBtn.classList.add("active"); typeVoiceBtn.classList.remove("active"); });
+typeVoiceBtn.addEventListener("click", () => { selectedChannelType = "voice"; typeVoiceBtn.classList.add("active"); typeTextBtn.classList.remove("active"); });
 channelModalCancel.addEventListener("click", () => channelModal.classList.add("hidden"));
 
 channelModalConfirm.addEventListener("click", async () => {
   channelModalStatus.textContent = "";
   try {
-    await api(`/api/servers/${activeServerId}/channels`, {
-      method: "POST",
-      body: JSON.stringify({
-        name: newChannelName.value.trim(),
-        categoryId: newChannelCategory.value || null,
-        type: selectedChannelType,
-      }),
-    });
-    await loadServers();
-    renderChannelList();
-    channelModal.classList.add("hidden");
-  } catch (err) {
-    channelModalStatus.textContent = err.message;
-  }
+    await api(`/api/servers/${activeServerId}/channels`, { method: "POST", body: JSON.stringify({ name: newChannelName.value.trim(), categoryId: newChannelCategory.value || null, type: selectedChannelType }) });
+    await loadServers(); renderChannelList(); channelModal.classList.add("hidden");
+  } catch (err) { channelModalStatus.textContent = err.message; }
 });
 
-// ---------- Modal: editar perfil ----------
 const profileUsernameInput = document.getElementById("profile-username-input");
-
 profileBtn.addEventListener("click", () => {
-  pendingAvatarDataUrl = null;
-  pendingBannerDataUrl = null;
-  profileModalStatus.textContent = "";
+  pendingAvatarDataUrl = null; pendingBannerDataUrl = null; profileModalStatus.textContent = "";
   profileAvatarPreview.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
-  if (currentUser?.bannerDataUrl) {
-    profileBannerPreview.style.backgroundImage = `url(${currentUser.bannerDataUrl})`;
-    profileBannerPreview.innerHTML = "";
-  } else {
-    profileBannerPreview.style.backgroundImage = "";
-    profileBannerPreview.innerHTML = '<span style="color: var(--muted); font-size: 0.85rem;">Sem banner</span>';
-  }
+  if (currentUser?.bannerDataUrl) { profileBannerPreview.style.backgroundImage = `url(${currentUser.bannerDataUrl})`; profileBannerPreview.innerHTML = ""; } 
+  else { profileBannerPreview.style.backgroundImage = ""; profileBannerPreview.innerHTML = '<span style="color: var(--muted); font-size: 0.85rem;">Sem banner</span>'; }
   profileUsernameInput.value = currentUser?.username || "";
   profilePronounsInput.value = currentUser?.pronouns || "";
   profileBioInput.value = currentUser?.bio || "";
@@ -1573,37 +1214,15 @@ profileBtn.addEventListener("click", () => {
 
 profileAvatarChooseBtn.addEventListener("click", () => profileAvatarInput.click());
 profileBannerChooseBtn.addEventListener("click", () => profileBannerInput.click());
-
-profileAvatarInput.addEventListener("change", async () => {
-  const file = profileAvatarInput.files[0];
-  if (!file) return;
-  pendingAvatarDataUrl = await resizeImageFile(file);
-  profileAvatarPreview.innerHTML = `<img src="${pendingAvatarDataUrl}" alt="" />`;
-});
-
-profileBannerInput.addEventListener("change", async () => {
-  const file = profileBannerInput.files[0];
-  if (!file) return;
-  pendingBannerDataUrl = await resizeImageKeepAspect(file, 640);
-  profileBannerPreview.style.backgroundImage = `url(${pendingBannerDataUrl})`;
-  profileBannerPreview.innerHTML = "";
-});
-
+profileAvatarInput.addEventListener("change", async () => { const file = profileAvatarInput.files[0]; if (!file) return; pendingAvatarDataUrl = await resizeImageFile(file); profileAvatarPreview.innerHTML = `<img src="${pendingAvatarDataUrl}" alt="" />`; });
+profileBannerInput.addEventListener("change", async () => { const file = profileBannerInput.files[0]; if (!file) return; pendingBannerDataUrl = await resizeImageKeepAspect(file, 640); profileBannerPreview.style.backgroundImage = `url(${pendingBannerDataUrl})`; profileBannerPreview.innerHTML = ""; });
 profileModalCancel.addEventListener("click", () => profileModal.classList.add("hidden"));
 
 profileLogoutBtn.addEventListener("click", () => {
-  leaveCall();
-  token = null;
-  currentUser = null;
-  myServers = [];
-  activeServerId = null;
-  activeChannelId = null;
-  localStorage.removeItem("telalive-token");
-  profileModal.classList.add("hidden");
-  appScreen.style.display = "none";
-  authScreen.classList.remove("hidden");
-  authUsername.value = "";
-  authPassword.value = "";
+  leaveCall(); token = null; currentUser = null; myServers = []; activeServerId = null; activeChannelId = null;
+  localStorage.removeItem("telalive-token"); profileModal.classList.add("hidden");
+  appScreen.style.display = "none"; authScreen.classList.remove("hidden");
+  authUsername.value = ""; authPassword.value = "";
 });
 
 profileModalConfirm.addEventListener("click", async () => {
@@ -1616,131 +1235,62 @@ profileModalConfirm.addEventListener("click", async () => {
   if (newUsername && newUsername !== currentUser?.username) body.username = newUsername;
   if (newPronouns !== (currentUser?.pronouns || "")) body.pronouns = newPronouns;
   if (newBio !== (currentUser?.bio || "")) body.bio = newBio;
-
-  if (Object.keys(body).length === 0) {
-    profileModal.classList.add("hidden");
-    return;
-  }
+  if (Object.keys(body).length === 0) { profileModal.classList.add("hidden"); return; }
   profileModalStatus.textContent = "";
-  try {
-    currentUser = await api("/api/me", { method: "PATCH", body: JSON.stringify(body) });
-    updateProfileBtn();
-    profileModal.classList.add("hidden");
-  } catch (err) {
-    profileModalStatus.textContent = err.message;
-  }
+  try { currentUser = await api("/api/me", { method: "PATCH", body: JSON.stringify(body) }); updateProfileBtn(); profileModal.classList.add("hidden"); } 
+  catch (err) { profileModalStatus.textContent = err.message; }
 });
 
-// ---------- Modal: editar ícone do servidor ----------
 editServerIconBtn.addEventListener("click", () => {
-  pendingServerIconDataUrl = null;
-  serverIconModalStatus.textContent = "";
+  pendingServerIconDataUrl = null; serverIconModalStatus.textContent = "";
   const server = myServers.find((s) => s.id === activeServerId);
-  serverIconPreview.innerHTML = server?.iconDataUrl
-    ? `<img src="${server.iconDataUrl}" alt="" />`
-    : escapeHtml((server?.name || "?").slice(0, 2).toUpperCase());
+  serverIconPreview.innerHTML = server?.iconDataUrl ? `<img src="${server.iconDataUrl}" alt="" />` : escapeHtml((server?.name || "?").slice(0, 2).toUpperCase());
   serverIconModal.classList.remove("hidden");
 });
-
 serverIconChooseBtn.addEventListener("click", () => serverIconInput.click());
-
-serverIconInput.addEventListener("change", async () => {
-  const file = serverIconInput.files[0];
-  if (!file) return;
-  pendingServerIconDataUrl = await resizeImageFile(file);
-  serverIconPreview.innerHTML = `<img src="${pendingServerIconDataUrl}" alt="" />`;
-});
-
+serverIconInput.addEventListener("change", async () => { const file = serverIconInput.files[0]; if (!file) return; pendingServerIconDataUrl = await resizeImageFile(file); serverIconPreview.innerHTML = `<img src="${pendingServerIconDataUrl}" alt="" />`; });
 serverIconModalCancel.addEventListener("click", () => serverIconModal.classList.add("hidden"));
 
 serverIconModalConfirm.addEventListener("click", async () => {
-  if (!pendingServerIconDataUrl) {
-    serverIconModal.classList.add("hidden");
-    return;
-  }
+  if (!pendingServerIconDataUrl) { serverIconModal.classList.add("hidden"); return; }
   serverIconModalStatus.textContent = "";
-  try {
-    await api(`/api/servers/${activeServerId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ iconDataUrl: pendingServerIconDataUrl }),
-    });
-    await loadServers();
-    serverIconModal.classList.add("hidden");
-  } catch (err) {
-    serverIconModalStatus.textContent = err.message;
-  }
+  try { await api(`/api/servers/${activeServerId}`, { method: "PATCH", body: JSON.stringify({ iconDataUrl: pendingServerIconDataUrl }) }); await loadServers(); serverIconModal.classList.add("hidden"); } 
+  catch (err) { serverIconModalStatus.textContent = err.message; }
 });
 
-// ---------- Amigos ----------
 friendsBtn.addEventListener("click", () => {
-  activeServerId = null;
-  activeChannelId = null;
-  leaveCall();
-  renderServerRail();
+  activeServerId = null; activeChannelId = null; leaveCall(); renderServerRail();
   document.querySelector(".channel-panel").style.display = "none";
   document.querySelector(".main-panel").style.display = "none";
-  friendsPanel.style.display = "flex";
-  loadFriends();
+  friendsPanel.style.display = "flex"; loadFriends();
 });
 
 async function loadFriends() {
-  try {
-    const data = await api("/api/friends");
-    cachedFriendsForMention = data.friends; 
-    renderFriends(data);
-  } catch (err) {
-    console.error(err);
-  }
+  try { const data = await api("/api/friends"); cachedFriendsForMention = data.friends; renderFriends(data); } catch (err) { console.error(err); }
 }
 
 function renderFriendRow({ user, requestId, kind }) {
   const row = document.createElement("div");
   row.className = "friend-row";
-  const actionsHtml =
-    kind === "incoming"
-      ? `<button class="friend-action-btn accept" data-id="${requestId}">Aceitar</button>
-         <button class="friend-action-btn decline" data-id="${requestId}">Recusar</button>`
-      : kind === "outgoing"
-      ? `<button class="friend-action-btn decline" data-id="${requestId}">Cancelar</button>`
-      : `<button class="friend-action-btn accept" id="dm-btn">Conversar</button>`;
-  row.innerHTML = `
-    <div class="avatar" style="cursor:pointer;">${avatarHtml(user.username, user.avatarDataUrl)}</div>
-    <div class="friend-name">${escapeHtml(user.username)}</div>
-    <div class="friend-actions">${actionsHtml}</div>
-  `;
+  const actionsHtml = kind === "incoming" ? `<button class="friend-action-btn accept" data-id="${requestId}">Aceitar</button><button class="friend-action-btn decline" data-id="${requestId}">Recusar</button>` : kind === "outgoing" ? `<button class="friend-action-btn decline" data-id="${requestId}">Cancelar</button>` : `<button class="friend-action-btn accept" id="dm-btn">Conversar</button>`;
+  row.innerHTML = `<div class="avatar" style="cursor:pointer;">${avatarHtml(user.username, user.avatarDataUrl)}</div><div class="friend-name">${escapeHtml(user.username)}</div><div class="friend-actions">${actionsHtml}</div>`;
   row.querySelector(".avatar").addEventListener("click", () => openUserCard(user));
-  if (kind === "incoming") {
-    row.querySelector(".accept").addEventListener("click", () => respondFriendRequest(requestId, "accept"));
-    row.querySelector(".decline").addEventListener("click", () => respondFriendRequest(requestId, "decline"));
-  } else if (kind === "outgoing") {
-    row.querySelector(".decline").addEventListener("click", () => respondFriendRequest(requestId, "decline"));
-  } else if (kind === "friend") {
-    row.querySelector("#dm-btn").addEventListener("click", () => openDirectMessage(user));
-  }
+  if (kind === "incoming") { row.querySelector(".accept").addEventListener("click", () => respondFriendRequest(requestId, "accept")); row.querySelector(".decline").addEventListener("click", () => respondFriendRequest(requestId, "decline")); } 
+  else if (kind === "outgoing") row.querySelector(".decline").addEventListener("click", () => respondFriendRequest(requestId, "decline"));
+  else if (kind === "friend") row.querySelector("#dm-btn").addEventListener("click", () => openDirectMessage(user));
   return row;
 }
 
 function renderFriends(data) {
   incomingList.innerHTML = "";
-  if (data.incoming.length === 0) {
-    incomingList.innerHTML = '<p class="friends-empty">Nenhum pedido recebido.</p>';
-  } else {
-    for (const r of data.incoming) incomingList.appendChild(renderFriendRow({ ...r, kind: "incoming" }));
-  }
-
+  if (data.incoming.length === 0) incomingList.innerHTML = '<p class="friends-empty">Nenhum pedido recebido.</p>';
+  else for (const r of data.incoming) incomingList.appendChild(renderFriendRow({ ...r, kind: "incoming" }));
   outgoingList.innerHTML = "";
-  if (data.outgoing.length === 0) {
-    outgoingList.innerHTML = '<p class="friends-empty">Nenhum pedido enviado.</p>';
-  } else {
-    for (const r of data.outgoing) outgoingList.appendChild(renderFriendRow({ ...r, kind: "outgoing" }));
-  }
-
+  if (data.outgoing.length === 0) outgoingList.innerHTML = '<p class="friends-empty">Nenhum pedido enviado.</p>';
+  else for (const r of data.outgoing) outgoingList.appendChild(renderFriendRow({ ...r, kind: "outgoing" }));
   friendsList.innerHTML = "";
-  if (data.friends.length === 0) {
-    friendsList.innerHTML = '<p class="friends-empty">Você ainda não tem amigos adicionados.</p>';
-  } else {
-    for (const user of data.friends) friendsList.appendChild(renderFriendRow({ user, kind: "friend" }));
-  }
+  if (data.friends.length === 0) friendsList.innerHTML = '<p class="friends-empty">Você ainda não tem amigos adicionados.</p>';
+  else for (const user of data.friends) friendsList.appendChild(renderFriendRow({ user, kind: "friend" }));
 }
 
 addFriendBtn.addEventListener("click", async () => {
@@ -1748,321 +1298,146 @@ addFriendBtn.addEventListener("click", async () => {
   if (!username) return;
   addFriendStatus.textContent = "";
   try {
-    const result = await api("/api/friends/request", {
-      method: "POST",
-      body: JSON.stringify({ username }),
-    });
-    addFriendInput.value = "";
-    addFriendStatus.textContent = result.autoAccepted ? "Vocês agora são amigos!" : "Pedido enviado!";
-    addFriendStatus.style.color = "var(--success)";
-    loadFriends();
-  } catch (err) {
-    addFriendStatus.style.color = "var(--danger)";
-    addFriendStatus.textContent = err.message;
-  }
+    const result = await api("/api/friends/request", { method: "POST", body: JSON.stringify({ username }) });
+    addFriendInput.value = ""; addFriendStatus.textContent = result.autoAccepted ? "Vocês agora são amigos!" : "Pedido enviado!"; addFriendStatus.style.color = "var(--success)"; loadFriends();
+  } catch (err) { addFriendStatus.style.color = "var(--danger)"; addFriendStatus.textContent = err.message; }
 });
 
-addFriendInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") addFriendBtn.click();
-});
+addFriendInput.addEventListener("keydown", (e) => { if (e.key === "Enter") addFriendBtn.click(); });
+async function respondFriendRequest(requestId, action) { try { await api(`/api/friends/${requestId}/${action}`, { method: "POST" }); loadFriends(); } catch (err) { console.error(err); } }
 
-async function respondFriendRequest(requestId, action) {
-  try {
-    await api(`/api/friends/${requestId}/${action}`, { method: "POST" });
-    loadFriends();
-  } catch (err) {
-    console.error(err);
-  }
-}
-
-// ---------- Menu de contexto do servidor ----------
 function openServerContextMenu(serverId, x, y) {
-  contextMenuServerId = serverId;
-  ctxToggleMutedSwitch.classList.toggle("on", hideMutedChannels);
-  serverContextMenu.style.left = `${x}px`;
-  serverContextMenu.style.top = `${y}px`;
-  serverContextMenu.classList.remove("hidden");
+  contextMenuServerId = serverId; ctxToggleMutedSwitch.classList.toggle("on", hideMutedChannels);
+  serverContextMenu.style.left = `${x}px`; serverContextMenu.style.top = `${y}px`; serverContextMenu.classList.remove("hidden");
 }
-
-function closeServerContextMenu() {
-  serverContextMenu.classList.add("hidden");
-  contextMenuServerId = null;
-}
-
-document.addEventListener("click", (e) => {
-  if (!serverContextMenu.contains(e.target)) closeServerContextMenu();
-  if (!itemContextMenu.contains(e.target)) itemContextMenu.classList.add("hidden");
-});
-
+function closeServerContextMenu() { serverContextMenu.classList.add("hidden"); contextMenuServerId = null; }
+document.addEventListener("click", (e) => { if (!serverContextMenu.contains(e.target)) closeServerContextMenu(); if (!itemContextMenu.contains(e.target)) itemContextMenu.classList.add("hidden"); });
 function openItemContextMenu(type, id, x, y) {
   itemContextTarget = { type, id };
   itemCtxCreateChannel.style.display = type === "category" ? "flex" : "none";
   itemCtxDelete.querySelector("span").textContent = type === "category" ? "Excluir categoria" : "Excluir canal";
-  itemContextMenu.style.left = `${x}px`;
-  itemContextMenu.style.top = `${y}px`;
-  itemContextMenu.classList.remove("hidden");
+  itemContextMenu.style.left = `${x}px`; itemContextMenu.style.top = `${y}px`; itemContextMenu.classList.remove("hidden");
 }
-
-itemCtxCreateChannel.addEventListener("click", () => {
-  itemContextMenu.classList.add("hidden");
-  addChannelBtn.click();
-  if (itemContextTarget?.type === "category") newChannelCategory.value = itemContextTarget.id;
-});
-
+itemCtxCreateChannel.addEventListener("click", () => { itemContextMenu.classList.add("hidden"); addChannelBtn.click(); if (itemContextTarget?.type === "category") newChannelCategory.value = itemContextTarget.id; });
 itemCtxDelete.addEventListener("click", async () => {
   itemContextMenu.classList.add("hidden");
   if (!itemContextTarget) return;
   try {
     if (itemContextTarget.type === "channel") {
       await api(`/api/channels/${itemContextTarget.id}`, { method: "DELETE" });
-      if (activeChannelId === itemContextTarget.id) {
-        activeChannelId = null;
-        leaveCall();
-        emptyState.classList.remove("hidden");
-        callView.classList.add("hidden");
-      }
-    } else {
-      await api(`/api/servers/${activeServerId}/categories/${itemContextTarget.id}`, { method: "DELETE" });
-    }
-    await loadServers();
-    renderChannelList();
-  } catch (err) {
-    alert(err.message);
-  }
+      if (activeChannelId === itemContextTarget.id) { activeChannelId = null; leaveCall(); emptyState.classList.remove("hidden"); callView.classList.add("hidden"); }
+    } else await api(`/api/servers/${activeServerId}/categories/${itemContextTarget.id}`, { method: "DELETE" });
+    await loadServers(); renderChannelList();
+  } catch (err) { alert(err.message); }
 });
 
-ctxCreateChannel.addEventListener("click", () => {
-  if (contextMenuServerId !== activeServerId) selectServer(contextMenuServerId);
-  closeServerContextMenu();
-  addChannelBtn.click();
-});
-
+ctxCreateChannel.addEventListener("click", () => { if (contextMenuServerId !== activeServerId) selectServer(contextMenuServerId); closeServerContextMenu(); addChannelBtn.click(); });
 ctxCreateCategory.addEventListener("click", () => {
   if (contextMenuServerId !== activeServerId) selectServer(contextMenuServerId);
-  closeServerContextMenu();
-  newCategoryName.value = "";
-  newCategoryPrivate.checked = false;
-  categoryMembersField.classList.add("hidden");
-  categoryModalStatus.textContent = "";
-  categoryModal.classList.remove("hidden");
+  closeServerContextMenu(); newCategoryName.value = ""; newCategoryPrivate.checked = false;
+  categoryMembersField.classList.add("hidden"); categoryModalStatus.textContent = ""; categoryModal.classList.remove("hidden");
 });
 
 newCategoryPrivate.addEventListener("change", async () => {
-  if (!newCategoryPrivate.checked) {
-    categoryMembersField.classList.add("hidden");
-    return;
-  }
-  categoryMembersField.classList.remove("hidden");
-  categoryMembersList.innerHTML = "Carregando...";
+  if (!newCategoryPrivate.checked) { categoryMembersField.classList.add("hidden"); return; }
+  categoryMembersField.classList.remove("hidden"); categoryMembersList.innerHTML = "Carregando...";
   try {
     const members = await api(`/api/servers/${activeServerId}/members`);
     categoryMembersList.innerHTML = "";
     for (const member of members) {
       if (member.id === currentUser.id) continue;
-      const row = document.createElement("label");
-      row.className = "member-check-row";
-      row.innerHTML = `
-        <input type="checkbox" value="${member.id}" />
-        <div class="avatar">${avatarHtml(member.username, member.avatarDataUrl)}</div>
-        <span>${escapeHtml(member.username)}</span>
-      `;
+      const row = document.createElement("label"); row.className = "member-check-row";
+      row.innerHTML = `<input type="checkbox" value="${member.id}" /><div class="avatar">${avatarHtml(member.username, member.avatarDataUrl)}</div><span>${escapeHtml(member.username)}</span>`;
       categoryMembersList.appendChild(row);
     }
-    if (categoryMembersList.children.length === 0) {
-      categoryMembersList.innerHTML = '<p class="friends-empty">Ninguém mais nesse servidor ainda.</p>';
-    }
-  } catch (err) {
-    categoryMembersList.innerHTML = "";
-  }
+    if (categoryMembersList.children.length === 0) categoryMembersList.innerHTML = '<p class="friends-empty">Ninguém mais nesse servidor ainda.</p>';
+  } catch (err) { categoryMembersList.innerHTML = ""; }
 });
 
 ctxInvite.addEventListener("click", () => {
   const server = myServers.find((s) => s.id === contextMenuServerId);
-  if (server) {
-    navigator.clipboard.writeText(server.inviteCode);
-    ctxInvite.querySelector("span").textContent = "Código copiado!";
-    setTimeout(() => (ctxInvite.querySelector("span").textContent = "Convidar para o servidor"), 1200);
-  }
+  if (server) { navigator.clipboard.writeText(server.inviteCode); ctxInvite.querySelector("span").textContent = "Código copiado!"; setTimeout(() => (ctxInvite.querySelector("span").textContent = "Convidar para o servidor"), 1200); }
 });
 
 ctxToggleMuted.addEventListener("click", () => {
-  hideMutedChannels = !hideMutedChannels;
-  localStorage.setItem("telalive-hide-muted", hideMutedChannels ? "1" : "0");
-  ctxToggleMutedSwitch.classList.toggle("on", hideMutedChannels);
-  renderChannelList();
+  hideMutedChannels = !hideMutedChannels; localStorage.setItem("telalive-hide-muted", hideMutedChannels ? "1" : "0");
+  ctxToggleMutedSwitch.classList.toggle("on", hideMutedChannels); renderChannelList();
 });
 
 categoryModalCancel.addEventListener("click", () => categoryModal.classList.add("hidden"));
 
 categoryModalConfirm.addEventListener("click", async () => {
   categoryModalStatus.textContent = "";
-  const allowedUserIds = newCategoryPrivate.checked
-    ? [...categoryMembersList.querySelectorAll("input:checked")].map((el) => el.value)
-    : [];
+  const allowedUserIds = newCategoryPrivate.checked ? [...categoryMembersList.querySelectorAll("input:checked")].map((el) => el.value) : [];
   try {
-    await api(`/api/servers/${activeServerId}/categories`, {
-      method: "POST",
-      body: JSON.stringify({
-        name: newCategoryName.value.trim(),
-        private: newCategoryPrivate.checked,
-        allowedUserIds,
-      }),
-    });
-    await loadServers();
-    renderChannelList();
-    categoryModal.classList.add("hidden");
-  } catch (err) {
-    categoryModalStatus.textContent = err.message;
-  }
+    await api(`/api/servers/${activeServerId}/categories`, { method: "POST", body: JSON.stringify({ name: newCategoryName.value.trim(), private: newCategoryPrivate.checked, allowedUserIds }) });
+    await loadServers(); renderChannelList(); categoryModal.classList.add("hidden");
+  } catch (err) { categoryModalStatus.textContent = err.message; }
 });
 
-// ---------- Responder mensagem ----------
 function setReplyState(msg) {
-  replyingToMessage = { id: msg.id, username: msg.username, text: (msg.text || (msg.imageDataUrl ? "📷 imagem" : msg.videoId ? "🎬 vídeo" : msg.audioDataUrl ? "🎤 áudio" : "")).slice(0, 80) };
+  replyingToMessage = { id: msg.id, username: msg.username, text: (msg.text || (msg.imageDataUrl ? "📷 imagem" : msg.fileName ? `📄 ${msg.fileName}` : msg.videoId ? "🎬 vídeo" : msg.audioDataUrl ? "🎤 áudio" : "")).slice(0, 80) };
   replyBannerText.textContent = `Respondendo a ${msg.username}: ${replyingToMessage.text}`;
-  replyBanner.classList.remove("hidden");
-  chatInput.focus();
+  replyBanner.classList.remove("hidden"); chatInput.focus();
 }
-
-function clearReplyState() {
-  replyingToMessage = null;
-  replyBanner.classList.add("hidden");
-}
-
+function clearReplyState() { replyingToMessage = null; replyBanner.classList.add("hidden"); }
 replyBannerCancel.addEventListener("click", clearReplyState);
 
-// ---------- Editar mensagem ----------
 function startEditingMessage(el, msg) {
-  const wrap = el.querySelector(".chat-msg-text-wrap");
-  const original = wrap.innerHTML;
+  const wrap = el.querySelector(".chat-msg-text-wrap"); const original = wrap.innerHTML;
   wrap.innerHTML = `<input class="chat-msg-edit-input" value="${msg.text.replace(/"/g, "&quot;")}" />`;
-  const input = wrap.querySelector("input");
-  input.focus();
-  input.setSelectionRange(input.value.length, input.value.length);
-
+  const input = wrap.querySelector("input"); input.focus(); input.setSelectionRange(input.value.length, input.value.length);
   async function save() {
-    const newText = input.value.trim();
-    if (!newText) return;
-    try {
-      await api(`/api/messages/${msg.id}`, { method: "PATCH", body: JSON.stringify({ text: newText }) });
-    } catch (err) {
-      alert(err.message);
-      wrap.innerHTML = original;
-    }
+    const newText = input.value.trim(); if (!newText) return;
+    try { await api(`/api/messages/${msg.id}`, { method: "PATCH", body: JSON.stringify({ text: newText }) }); } catch (err) { alert(err.message); wrap.innerHTML = original; }
   }
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") save();
-    if (e.key === "Escape") wrap.innerHTML = original;
-  });
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); if (e.key === "Escape") wrap.innerHTML = original; });
   input.addEventListener("blur", save);
 }
 
-// ---------- Excluir mensagem ----------
 async function deleteMessage(messageId) {
   if (!confirm("Excluir essa mensagem?")) return;
-  try {
-    await api(`/api/messages/${messageId}`, { method: "DELETE" });
-  } catch (err) {
-    alert(err.message);
-  }
+  try { await api(`/api/messages/${messageId}`, { method: "DELETE" }); } catch (err) { alert(err.message); }
 }
 
-// ---------- Encaminhar mensagem ----------
 async function openForwardModal(msg) {
-  forwardingMessage = msg;
-  forwardModalStatus.textContent = "";
-  forwardTargetsList.innerHTML = "Carregando...";
-  forwardModal.classList.remove("hidden");
-
+  forwardingMessage = msg; forwardModalStatus.textContent = ""; forwardTargetsList.innerHTML = "Carregando..."; forwardModal.classList.remove("hidden");
   const targets = [];
-  for (const server of myServers) {
-    for (const channel of server.channels) {
-      targets.push({ label: `${server.name} / #${channel.name}`, channelId: channel.id });
-    }
-  }
-  try {
-    const data = await api("/api/friends");
-    for (const friend of data.friends) {
-      targets.push({ label: `DM: ${friend.username}`, friend });
-    }
-  } catch {}
-
+  for (const server of myServers) for (const channel of server.channels) targets.push({ label: `${server.name} / #${channel.name}`, channelId: channel.id });
+  try { const data = await api("/api/friends"); for (const friend of data.friends) targets.push({ label: `DM: ${friend.username}`, friend }); } catch {}
   forwardTargetsList.innerHTML = "";
-  if (targets.length === 0) {
-    forwardTargetsList.innerHTML = '<p class="friends-empty">Nenhum destino disponível.</p>';
-    return;
-  }
-  for (const target of targets) {
-    const item = document.createElement("div");
-    item.className = "forward-target-item";
-    item.textContent = target.label;
-    item.addEventListener("click", () => forwardMessageTo(target));
-    forwardTargetsList.appendChild(item);
-  }
+  if (targets.length === 0) { forwardTargetsList.innerHTML = '<p class="friends-empty">Nenhum destino disponível.</p>'; return; }
+  for (const target of targets) { const item = document.createElement("div"); item.className = "forward-target-item"; item.textContent = target.label; item.addEventListener("click", () => forwardMessageTo(target)); forwardTargetsList.appendChild(item); }
 }
 
 async function forwardMessageTo(target) {
   forwardModalStatus.textContent = "Encaminhando...";
   try {
     let channelId = target.channelId;
-    if (!channelId && target.friend) {
-      const dm = await api(`/api/friends/${target.friend.id}/dm`, { method: "POST" });
-      channelId = dm.channelId;
-    }
-    await api(`/api/channels/${channelId}/forward`, {
-      method: "POST",
-      body: JSON.stringify({
-        text: forwardingMessage.text,
-        imageDataUrl: forwardingMessage.imageDataUrl,
-        audioDataUrl: forwardingMessage.audioDataUrl,
-        videoId: forwardingMessage.videoId,
-      }),
-    });
-    forwardModalStatus.textContent = "Mensagem encaminhada!";
-    forwardModalStatus.style.color = "var(--success)";
+    if (!channelId && target.friend) { const dm = await api(`/api/friends/${target.friend.id}/dm`, { method: "POST" }); channelId = dm.channelId; }
+    await api(`/api/channels/${channelId}/forward`, { method: "POST", body: JSON.stringify({ text: forwardingMessage.text, imageDataUrl: forwardingMessage.imageDataUrl, audioDataUrl: forwardingMessage.audioDataUrl, videoId: forwardingMessage.videoId, fileId: forwardingMessage.fileId, fileName: forwardingMessage.fileName }) });
+    forwardModalStatus.textContent = "Mensagem encaminhada!"; forwardModalStatus.style.color = "var(--success)";
     setTimeout(() => forwardModal.classList.add("hidden"), 900);
-  } catch (err) {
-    forwardModalStatus.style.color = "var(--danger)";
-    forwardModalStatus.textContent = err.message;
-  }
+  } catch (err) { forwardModalStatus.style.color = "var(--danger)"; forwardModalStatus.textContent = err.message; }
 }
-
 forwardModalCancel.addEventListener("click", () => forwardModal.classList.add("hidden"));
 
-// ---------- Início ----------
 updateAuthUI();
 tryResumeSession();
 
-// ---------- Login com Google ----------
 const GOOGLE_CLIENT_ID = "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
 
 async function handleGoogleCredential(response) {
   authStatus.textContent = "";
   try {
-    const data = await api("/api/auth/google", {
-      method: "POST",
-      body: JSON.stringify({ idToken: response.credential }),
-    });
-    token = data.token;
-    currentUser = data.user;
-    localStorage.setItem("telalive-token", token);
-    enterApp();
-  } catch (err) {
-    authStatus.textContent = err.message;
-  }
+    const data = await api("/api/auth/google", { method: "POST", body: JSON.stringify({ idToken: response.credential }) });
+    token = data.token; currentUser = data.user; localStorage.setItem("telalive-token", token); enterApp();
+  } catch (err) { authStatus.textContent = err.message; }
 }
 
 function initGoogleButton() {
-  if (!window.google || !window.google.accounts) {
-    setTimeout(initGoogleButton, 300);
-    return;
-  }
+  if (!window.google || !window.google.accounts) { setTimeout(initGoogleButton, 300); return; }
   google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential });
-  google.accounts.id.renderButton(document.getElementById("google-signin-btn"), {
-    theme: "filled_black",
-    size: "large",
-    shape: "pill",
-    text: "continue_with",
-  });
+  google.accounts.id.renderButton(document.getElementById("google-signin-btn"), { theme: "filled_black", size: "large", shape: "pill", text: "continue_with" });
 }
 initGoogleButton();
