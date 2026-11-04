@@ -29,7 +29,7 @@ async function startServer(port = 3000) {
 
   const sessions = new Map();
   const app = express();
-  app.use(express.json({ limit: "15mb" })); // Aumentei o limite pra caber arquivos maiores
+  app.use(express.json({ limit: "15mb" }));
   app.use(express.static(path.join(__dirname, "public")));
 
   function requireAuth(req, res, next) {
@@ -114,17 +114,28 @@ async function startServer(port = 3000) {
   app.patch("/api/me", requireAuth, (req, res) => {
     const user = db.users.find((u) => u.id === req.userId);
     const { avatarDataUrl, username, bannerDataUrl, bio, pronouns } = req.body || {};
+    let changed = false;
+
     if (typeof username === "string" && username.trim() !== user.username) {
       const clean = username.trim();
       if (clean.length < 3) return res.status(400).json({ error: "Nome precisa ter pelo menos 3 letras." });
       if (db.users.some((u) => u.id !== user.id && u.username.toLowerCase() === clean.toLowerCase())) return res.status(400).json({ error: "Esse nome já existe." });
       user.username = clean;
-      persist();
+      changed = true;
     }
-    if (typeof avatarDataUrl === "string" && avatarDataUrl.startsWith("data:image/")) { user.avatarDataUrl = avatarDataUrl; persist(); }
-    if (typeof bannerDataUrl === "string" && bannerDataUrl.startsWith("data:image/")) { user.bannerDataUrl = bannerDataUrl; persist(); }
-    if (typeof bio === "string") { user.bio = bio.trim().slice(0, 190); persist(); }
-    if (typeof pronouns === "string") { user.pronouns = pronouns.trim().slice(0, 40); persist(); }
+    if (typeof avatarDataUrl === "string" && avatarDataUrl.startsWith("data:image/")) { user.avatarDataUrl = avatarDataUrl; changed = true; }
+    if (typeof bannerDataUrl === "string" && bannerDataUrl.startsWith("data:image/")) { user.bannerDataUrl = bannerDataUrl; changed = true; }
+    if (typeof bio === "string") { user.bio = bio.trim().slice(0, 190); changed = true; }
+    if (typeof pronouns === "string") { user.pronouns = pronouns.trim().slice(0, 40); changed = true; }
+
+    if (changed) {
+      persist();
+      // NOVO: avisa todo mundo online que o perfil mudou
+      const userData = publicUser(user);
+      for (const client of allConnectedClients) {
+        send(client, { type: "user-updated", user: userData });
+      }
+    }
     res.json(publicUser(user));
   });
 
@@ -334,8 +345,7 @@ async function startServer(port = 3000) {
     res.json(message);
   });
 
-  // ---------- ARQUIVOS E VÍDEOS ----------
-  const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15MB
+  const MAX_FILE_BYTES = 15 * 1024 * 1024; 
   
   app.post(
     "/api/channels/:channelId/media",
@@ -401,6 +411,7 @@ async function startServer(port = 3000) {
   const wss = new WebSocketServer({ server });
   const callRooms = new Map();
   const chatSubscribers = new Map();
+  const allConnectedClients = new Set(); // NOVO
 
   function send(ws, msg) { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg)); }
   let lastMessageTime = 0;
@@ -460,6 +471,8 @@ async function startServer(port = 3000) {
     const userId = sessions.get(token);
     if (!userId) { ws.close(); return; }
     
+    allConnectedClients.add(ws); // NOVO
+
     const author = db.users.find((u) => u.id === userId);
     ws.userId = userId; ws.username = author ? author.username : "?";
     ws.avatarDataUrl = author ? author.avatarDataUrl || author.googlePicture || null : null;
@@ -501,6 +514,7 @@ async function startServer(port = 3000) {
     });
 
     ws.on("close", () => {
+      allConnectedClients.delete(ws); // NOVO
       const room = callRooms.get(ws.channelId);
       if (room) { room.delete(ws.peerId); for (const peer of room.values()) send(peer, { type: "peer-left", id: ws.peerId }); if (room.size === 0) callRooms.delete(ws.channelId); }
       const subs = chatSubscribers.get(ws.channelId);
