@@ -130,8 +130,8 @@ async function startServer(port = 3000) {
 
     if (changed) {
       persist();
-      // NOVO: avisa todo mundo online que o perfil mudou
       const userData = publicUser(user);
+      // Avisa TODOS os clientes (que estão no WebSocket) que o perfil mudou
       for (const client of allConnectedClients) {
         send(client, { type: "user-updated", user: userData });
       }
@@ -411,7 +411,7 @@ async function startServer(port = 3000) {
   const wss = new WebSocketServer({ server });
   const callRooms = new Map();
   const chatSubscribers = new Map();
-  const allConnectedClients = new Set(); // NOVO
+  const allConnectedClients = new Set(); 
 
   function send(ws, msg) { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg)); }
   let lastMessageTime = 0;
@@ -471,7 +471,7 @@ async function startServer(port = 3000) {
     const userId = sessions.get(token);
     if (!userId) { ws.close(); return; }
     
-    allConnectedClients.add(ws); // NOVO
+    allConnectedClients.add(ws); 
 
     const author = db.users.find((u) => u.id === userId);
     ws.userId = userId; ws.username = author ? author.username : "?";
@@ -514,7 +514,7 @@ async function startServer(port = 3000) {
     });
 
     ws.on("close", () => {
-      allConnectedClients.delete(ws); // NOVO
+      allConnectedClients.delete(ws); 
       const room = callRooms.get(ws.channelId);
       if (room) { room.delete(ws.peerId); for (const peer of room.values()) send(peer, { type: "peer-left", id: ws.peerId }); if (room.size === 0) callRooms.delete(ws.channelId); }
       const subs = chatSubscribers.get(ws.channelId);
