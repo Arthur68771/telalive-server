@@ -17,7 +17,16 @@ let localScreenStream = null;
 let localMicStream = null;
 let micMuted = false;
 
-const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+// NOVO: Servidores STUN/TURN adicionais pra tentar furar NAT restritivo
+const rtcConfig = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:global.stun.twilio.com:3478" },
+  ],
+  iceCandidatePoolSize: 10
+};
 
 // ---------- Elementos ----------
 const authScreen = document.getElementById("auth-screen");
@@ -64,6 +73,7 @@ const messageSound = new Audio("message.mp3");
 function playJoinSound() { joinSound.currentTime = 0; joinSound.play().catch(() => {}); }
 function playLeaveSound() { leaveSound.currentTime = 0; leaveSound.play().catch(() => {}); }
 function playMessageSound() { messageSound.currentTime = 0; messageSound.play().catch(() => {}); }
+
 const chatMessagesEl = document.getElementById("chat-messages");
 const chatEmptyEl = document.getElementById("chat-empty");
 const chatInput = document.getElementById("chat-input");
@@ -261,43 +271,27 @@ function avatarHtml(username, avatarDataUrl) {
   return escapeHtml((username || "?").slice(0, 2).toUpperCase());
 }
 
-// ---------- Card de perfil (CORRIGIDO AQUI) ----------
+// ---------- Card de perfil ----------
 async function openUserCard(user) {
   if (!user) return;
-  
-  // Se não for eu mesmo, busca os dados mais recentes do servidor
   if (user.id !== currentUser?.id) {
     try {
       const friends = await api("/api/friends");
       const freshUser = friends.friends.find((f) => f.id === user.id);
       if (freshUser) user = freshUser;
-    } catch (err) {
-      console.warn("Não foi possível atualizar os dados do perfil:", err);
-    }
+    } catch (err) {}
   } else {
-    user = currentUser; // Se for eu, usa o currentUser que já está atualizado
+    user = currentUser;
   }
-
   userCardName.textContent = user.username || "?";
   userCardAvatar.innerHTML = avatarHtml(user.username, user.avatarDataUrl);
-  
-  if (user.bannerDataUrl) {
-    userCardBanner.style.backgroundImage = `url(${user.bannerDataUrl})`;
-  } else {
-    userCardBanner.style.backgroundImage = "";
-  }
-  
-  if (user.pronouns) {
-    userCardPronouns.textContent = user.pronouns;
-    userCardPronouns.style.display = "block";
-  } else {
-    userCardPronouns.style.display = "none";
-  }
-  
+  if (user.bannerDataUrl) userCardBanner.style.backgroundImage = `url(${user.bannerDataUrl})`;
+  else userCardBanner.style.backgroundImage = "";
+  if (user.pronouns) { userCardPronouns.textContent = user.pronouns; userCardPronouns.style.display = "block"; }
+  else userCardPronouns.style.display = "none";
   userCardBio.textContent = user.bio || "Sem bio.";
   userCardModal.classList.remove("hidden");
 }
-
 function closeUserCard() { userCardModal.classList.add("hidden"); }
 userCardClose.addEventListener("click", closeUserCard);
 userCardModal.addEventListener("click", (e) => { if (e.target === userCardModal) closeUserCard(); });
@@ -1014,9 +1008,23 @@ async function flushPendingIceCandidates(peerId, pc) {
 }
 
 function createPeerConnection(peerId, direction) {
-  // Tenta forçar o vídeo a vir com qualidade estável
   const conn = new RTCPeerConnection(rtcConfig);
   conn.onicecandidate = (event) => { if (event.candidate) ws.send(JSON.stringify({ type: "ice-candidate", target: peerId, candidate: event.candidate })); };
+  
+  // NOVO: Se a conexão cair, tenta reconectar (iceRestart)
+  conn.oniceconnectionstatechange = () => {
+    if (conn.iceConnectionState === "failed" || conn.iceConnectionState === "disconnected") {
+      console.log("Conexão caiu com", peerId, "- tentando reiniciar...");
+      if (direction === "out") {
+        conn.restartIce();
+        conn.createOffer({ iceRestart: true }).then((offer) => {
+          conn.setLocalDescription(offer);
+          ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
+        }).catch(console.error);
+      }
+    }
+  };
+
   if (direction === "in") {
     conn.ontrack = (event) => {
       const stream = event.streams[0];
@@ -1049,11 +1057,12 @@ function showVideoTile(peerId, username, stream) {
   let tile = document.getElementById(`tile-${peerId}`);
   if (!tile) {
     tile = document.createElement("div"); tile.className = "video-tile"; tile.id = `tile-${peerId}`;
-    tile.innerHTML = `<video autoplay playsinline></video><span class="video-tile-label">${escapeHtml(username)}</span>`;
+    tile.innerHTML = `<video autoplay playsinline muted></video><span class="video-tile-label">${escapeHtml(username)}</span>`;
     videoGrid.appendChild(tile);
   }
   const videoEl = tile.querySelector("video");
   videoEl.srcObject = stream; videoEl.muted = deafened;
+  videoEl.play().catch(() => {});
 }
 
 function removeVideoTile(peerId) {
@@ -1137,20 +1146,48 @@ micBtn.addEventListener("click", async () => {
 
 shareBtn.addEventListener("click", async () => {
   try {
-    // Tenta configurar o compartilhamento com um frame rate melhor
+    // Otimização: Pede a tela em 720p, que é mais leve e evita travamento
     localScreenStream = await navigator.mediaDevices.getDisplayMedia({ 
       video: { 
-        frameRate: { ideal: 30, max: 60 },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
+        frameRate: { ideal: 30, max: 60 }, // Tenta 30fps, se der vai até 60
+        width: { max: 1280 },             // Força resolução máxima de 720p
+        height: { max: 720 },
+        cursor: "always",
+        displaySurface: "monitor"
       }, 
       audio: true 
     });
-    for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
-    shareBtn.classList.add("hidden"); stopShareBtn.classList.remove("hidden");
+
+    // Avisa o WebRTC pra priorizar o movimento (evita que o vídeo fique borrado)
+    const videoTrack = localScreenStream.getVideoTracks()[0];
+    if (videoTrack && 'contentHint' in videoTrack) {
+      videoTrack.contentHint = 'motion';
+    }
+
+    // Sincroniza a tela com todos os amigos no canal
+    for (const peerId of knownPeers.keys()) {
+      await syncOutgoingTracksToPeer(peerId);
+      
+      // Otimização: Ajusta o Bitrate da conexão pra 2.5Mbps (bom pra 720p)
+      const pc = pcsOut.get(peerId);
+      if (pc) {
+        const sender = pc.getSenders().find(s => s.track === videoTrack);
+        if (sender) {
+          const params = sender.getParameters();
+          if (!params.encodings) params.encodings = [{}];
+          params.encodings[0].maxBitrate = 2500000; // 2.5 Mbps
+          await sender.setParameters(params);
+        }
+      }
+    }
+
+    shareBtn.classList.add("hidden"); 
+    stopShareBtn.classList.remove("hidden");
     statusText.textContent = "Transmitindo sua tela";
-    localScreenStream.getVideoTracks()[0].onended = () => stopSharing();
-  } catch (err) { console.error(err); }
+    videoTrack.onended = () => stopSharing();
+  } catch (err) { 
+    console.error("Erro ao compartilhar tela:", err); 
+  }
 });
 
 stopShareBtn.addEventListener("click", stopSharing);
