@@ -192,7 +192,6 @@ const userCardClose = document.getElementById("user-card-close");
 // ---------- Redimensionar imagem (Permite GIF e mantém animação) ----------
 function resizeImageFile(file, maxSize = 160) {
   return new Promise((resolve, reject) => {
-    // Se for GIF, envia do jeito que tá pra não perder a animação
     if (file.type === "image/gif") {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
@@ -200,7 +199,6 @@ function resizeImageFile(file, maxSize = 160) {
       reader.readAsDataURL(file);
       return;
     }
-    
     const reader = new FileReader();
     reader.onerror = reject;
     reader.onload = () => {
@@ -215,7 +213,7 @@ function resizeImageFile(file, maxSize = 160) {
         const sx = (img.width - side) / 2;
         const sy = (img.height - side) / 2;
         ctx.drawImage(img, sx, sy, side, side, 0, 0, maxSize, maxSize);
-        resolve(canvas.toDataURL("image/webp", 0.85)); // Usa webp que é mais leve e moderno
+        resolve(canvas.toDataURL("image/webp", 0.85));
       };
       img.src = reader.result;
     };
@@ -232,7 +230,6 @@ function resizeImageKeepAspect(file, maxDimension = 640) {
       reader.readAsDataURL(file);
       return;
     }
-    
     const reader = new FileReader();
     reader.onerror = reject;
     reader.onload = () => {
@@ -264,18 +261,43 @@ function avatarHtml(username, avatarDataUrl) {
   return escapeHtml((username || "?").slice(0, 2).toUpperCase());
 }
 
-// ---------- Card de perfil ----------
-function openUserCard(user) {
+// ---------- Card de perfil (CORRIGIDO AQUI) ----------
+async function openUserCard(user) {
   if (!user) return;
+  
+  // Se não for eu mesmo, busca os dados mais recentes do servidor
+  if (user.id !== currentUser?.id) {
+    try {
+      const friends = await api("/api/friends");
+      const freshUser = friends.friends.find((f) => f.id === user.id);
+      if (freshUser) user = freshUser;
+    } catch (err) {
+      console.warn("Não foi possível atualizar os dados do perfil:", err);
+    }
+  } else {
+    user = currentUser; // Se for eu, usa o currentUser que já está atualizado
+  }
+
   userCardName.textContent = user.username || "?";
   userCardAvatar.innerHTML = avatarHtml(user.username, user.avatarDataUrl);
-  if (user.bannerDataUrl) userCardBanner.style.backgroundImage = `url(${user.bannerDataUrl})`;
-  else userCardBanner.style.backgroundImage = "";
-  if (user.pronouns) { userCardPronouns.textContent = user.pronouns; userCardPronouns.style.display = "block"; }
-  else userCardPronouns.style.display = "none";
+  
+  if (user.bannerDataUrl) {
+    userCardBanner.style.backgroundImage = `url(${user.bannerDataUrl})`;
+  } else {
+    userCardBanner.style.backgroundImage = "";
+  }
+  
+  if (user.pronouns) {
+    userCardPronouns.textContent = user.pronouns;
+    userCardPronouns.style.display = "block";
+  } else {
+    userCardPronouns.style.display = "none";
+  }
+  
   userCardBio.textContent = user.bio || "Sem bio.";
   userCardModal.classList.remove("hidden");
 }
+
 function closeUserCard() { userCardModal.classList.add("hidden"); }
 userCardClose.addEventListener("click", closeUserCard);
 userCardModal.addEventListener("click", (e) => { if (e.target === userCardModal) closeUserCard(); });
@@ -916,36 +938,19 @@ function connectToChannel(channelId) {
         if (chatMessagesEl.children.length === 0) chatMessagesEl.innerHTML = '<p class="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>';
         break;
       }
-      // NOVO: Quando alguém muda o perfil, atualiza pra todo mundo na hora
       case "user-updated": {
         if (msg.user.id === currentUser.id) {
           currentUser = msg.user;
           updateProfileBtn();
         }
-        
-        // Atualiza o cache de amigos
         if (cachedFriendsForMention) {
           const friendIdx = cachedFriendsForMention.findIndex((f) => f.id === msg.user.id);
           if (friendIdx !== -1) cachedFriendsForMention[friendIdx] = msg.user;
         }
-
-        // Atualiza os avatares no chat que sejam desse usuário
-        document.querySelectorAll(`.chat-msg .avatar[data-user-id="${msg.user.id}"]`).forEach((el) => {
-          el.innerHTML = avatarHtml(msg.user.username, msg.user.avatarDataUrl);
-        });
-        document.querySelectorAll(`.chat-msg .chat-msg-author[data-user-id="${msg.user.id}"]`).forEach((el) => {
-          el.textContent = msg.user.username;
-        });
-        document.querySelectorAll(`.chat-msg .chat-msg-author[data-user-id="${msg.user.id}"]`).classList.toggle("me", msg.user.id === currentUser?.id);
-
-        // Atualiza os participantes em call
+        document.querySelectorAll(`.chat-msg .avatar[data-user-id="${msg.user.id}"]`).forEach((el) => { el.innerHTML = avatarHtml(msg.user.username, msg.user.avatarDataUrl); });
+        document.querySelectorAll(`.chat-msg .chat-msg-author[data-user-id="${msg.user.id}"]`).forEach((el) => { el.textContent = msg.user.username; });
         renderParticipantsBar();
-        
-        // Se o card dele estiver aberto, atualiza na hora
-        if (!userCardModal.classList.contains("hidden") && userCardName.textContent === msg.user.username) {
-          // Verifica se é o mesmo (pode ter mudado de nome, então confia no id se possível)
-          openUserCard(msg.user);
-        }
+        if (!userCardModal.classList.contains("hidden") && userCardName.textContent === msg.user.username) openUserCard(msg.user);
         break;
       }
     }
@@ -1009,6 +1014,7 @@ async function flushPendingIceCandidates(peerId, pc) {
 }
 
 function createPeerConnection(peerId, direction) {
+  // Tenta forçar o vídeo a vir com qualidade estável
   const conn = new RTCPeerConnection(rtcConfig);
   conn.onicecandidate = (event) => { if (event.candidate) ws.send(JSON.stringify({ type: "ice-candidate", target: peerId, candidate: event.candidate })); };
   if (direction === "in") {
@@ -1131,7 +1137,15 @@ micBtn.addEventListener("click", async () => {
 
 shareBtn.addEventListener("click", async () => {
   try {
-    localScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
+    // Tenta configurar o compartilhamento com um frame rate melhor
+    localScreenStream = await navigator.mediaDevices.getDisplayMedia({ 
+      video: { 
+        frameRate: { ideal: 30, max: 60 },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      }, 
+      audio: true 
+    });
     for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
     shareBtn.classList.add("hidden"); stopShareBtn.classList.remove("hidden");
     statusText.textContent = "Transmitindo sua tela";
