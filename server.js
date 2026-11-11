@@ -14,9 +14,6 @@ const {
 const GOOGLE_CLIENT_ID = "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
-// =========================================================================
-// COLOQUE SEU TOKEN DO HUGGING FACE AQUI
-// =========================================================================
 const HF_TOKEN = process.env.HF_TOKEN || "";
 
 async function startServer(port = 3000) {
@@ -125,8 +122,7 @@ async function startServer(port = 3000) {
       const clean = username.trim();
       if (clean.length < 3) return res.status(400).json({ error: "Nome precisa ter pelo menos 3 letras." });
       if (db.users.some((u) => u.id !== user.id && u.username.toLowerCase() === clean.toLowerCase())) return res.status(400).json({ error: "Esse nome já existe." });
-      user.username = clean;
-      changed = true;
+      user.username = clean; changed = true;
     }
     if (typeof avatarDataUrl === "string" && avatarDataUrl.startsWith("data:image/")) { user.avatarDataUrl = avatarDataUrl; changed = true; }
     if (typeof bannerDataUrl === "string" && bannerDataUrl.startsWith("data:image/")) { user.bannerDataUrl = bannerDataUrl; changed = true; }
@@ -136,18 +132,13 @@ async function startServer(port = 3000) {
     if (changed) {
       persist();
       const userData = publicUser(user);
-      for (const client of allConnectedClients) {
-        send(client, { type: "user-updated", user: userData });
-      }
+      for (const client of allConnectedClients) send(client, { type: "user-updated", user: userData });
     }
     res.json(publicUser(user));
   });
 
-  // === NOVA ROTA: Gera credenciais TURN via Hugging Face ===
   app.get("/api/turn-credentials", async (req, res) => {
-    if (!HF_TOKEN || HF_TOKEN === "hf_COLE_SEU_TOKEN_AQUI") {
-      return res.json({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-    }
+    if (!HF_TOKEN) return res.json({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
     try {
       const response = await fetch("https://huggingface.co/api/cloudflare/turn-credentials", {
         method: "POST",
@@ -157,9 +148,7 @@ async function startServer(port = 3000) {
       const data = await response.json();
       if (data.iceServers) res.json({ iceServers: data.iceServers });
       else res.json({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-    } catch (err) {
-      res.json({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-    }
+    } catch (err) { res.json({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); }
   });
 
   function serverWithChannels(server, userId) {
@@ -214,9 +203,7 @@ async function startServer(port = 3000) {
     const { name, categoryId, type } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome ao canal." });
     const channel = { id: crypto.randomUUID(), serverId: server.id, name: name.trim(), categoryId: categoryId || null, type: type === "voice" ? "voice" : "text" };
-    db.channels.push(channel);
-    persist();
-    res.json(channel);
+    db.channels.push(channel); persist(); res.json(channel);
   });
 
   app.post("/api/servers/:serverId/categories", requireAuth, (req, res) => {
@@ -225,8 +212,7 @@ async function startServer(port = 3000) {
     const { name, private: isPrivate, allowedUserIds } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome à categoria." });
     db.categories.push({ id: crypto.randomUUID(), serverId: server.id, name: name.trim(), private: !!isPrivate, allowedUserIds: isPrivate && Array.isArray(allowedUserIds) ? allowedUserIds : [] });
-    persist();
-    res.json({ ok: true });
+    persist(); res.json({ ok: true });
   });
 
   app.post("/api/channels/:channelId/mute", requireAuth, (req, res) => {
@@ -237,8 +223,7 @@ async function startServer(port = 3000) {
     const idx = user.mutedChannelIds.indexOf(req.params.channelId);
     if (idx === -1) user.mutedChannelIds.push(req.params.channelId);
     else user.mutedChannelIds.splice(idx, 1);
-    persist();
-    res.json({ muted: idx === -1 });
+    persist(); res.json({ muted: idx === -1 });
   });
 
   app.delete("/api/channels/:channelId", requireAuth, (req, res) => {
@@ -248,8 +233,7 @@ async function startServer(port = 3000) {
     if (!server || server.ownerId !== req.userId) return res.status(403).json({ error: "Só o dono pode excluir." });
     db.channels = db.channels.filter((c) => c.id !== req.params.channelId);
     deleteChannelMessages(req.params.channelId).then(async (videoIds) => { for (const id of videoIds) await deleteMediaIfUnused(id); }).catch((err) => console.error(err.message));
-    persist();
-    res.json({ ok: true });
+    persist(); res.json({ ok: true });
   });
 
   app.delete("/api/servers/:serverId/categories/:categoryId", requireAuth, (req, res) => {
@@ -257,8 +241,7 @@ async function startServer(port = 3000) {
     if (!server || server.ownerId !== req.userId) return res.status(403).json({ error: "Só o dono pode excluir." });
     db.categories = db.categories.filter((c) => c.id !== req.params.categoryId);
     for (const channel of db.channels) { if (channel.categoryId === req.params.categoryId) channel.categoryId = null; }
-    persist();
-    res.json({ ok: true });
+    persist(); res.json({ ok: true });
   });
 
   app.get("/api/friends", requireAuth, (req, res) => {
@@ -285,24 +268,20 @@ async function startServer(port = 3000) {
       return res.status(400).json({ error: "Pedido já enviado." });
     }
     db.friendRequests.push({ id: crypto.randomUUID(), fromUserId: req.userId, toUserId: target.id, status: "pending", createdAt: Date.now() });
-    persist();
-    res.json({ ok: true });
+    persist(); res.json({ ok: true });
   });
 
   app.post("/api/friends/:requestId/accept", requireAuth, (req, res) => {
     const request = db.friendRequests.find((r) => r.id === req.params.requestId);
     if (!request || request.toUserId !== req.userId || request.status !== "pending") return res.status(404).json({ error: "Pedido não encontrado." });
-    request.status = "accepted";
-    persist();
-    res.json({ ok: true });
+    request.status = "accepted"; persist(); res.json({ ok: true });
   });
 
   app.post("/api/friends/:requestId/decline", requireAuth, (req, res) => {
     const request = db.friendRequests.find((r) => r.id === req.params.requestId);
     if (!request || (request.toUserId !== req.userId && request.fromUserId !== req.userId)) return res.status(404).json({ error: "Pedido não encontrado." });
     db.friendRequests = db.friendRequests.filter((r) => r.id !== req.params.requestId);
-    persist();
-    res.json({ ok: true });
+    persist(); res.json({ ok: true });
   });
 
   function channelIfMember(channelId, userId) {
@@ -326,10 +305,8 @@ async function startServer(port = 3000) {
 
   app.get("/api/channels/:channelId/messages", requireAuth, async (req, res) => {
     if (!channelIfMember(req.params.channelId, req.userId)) return res.status(403).json({ error: "Sem acesso." });
-    try {
-      const msgs = await getChannelMessages(req.params.channelId, 100);
-      res.json(msgs);
-    } catch (err) { res.status(500).json({ error: "Erro ao carregar mensagens." }); }
+    try { const msgs = await getChannelMessages(req.params.channelId, 100); res.json(msgs); }
+    catch (err) { res.status(500).json({ error: "Erro ao carregar mensagens." }); }
   });
 
   app.patch("/api/messages/:messageId", requireAuth, async (req, res) => {
@@ -339,8 +316,7 @@ async function startServer(port = 3000) {
       const { text } = req.body || {};
       if (typeof text !== "string" || !text.trim()) return res.status(400).json({ error: "Vazio." });
       const fields = { text: text.trim().slice(0, 2000), editedAt: Date.now() };
-      await updateMessage(message.id, fields);
-      Object.assign(message, fields);
+      await updateMessage(message.id, fields); Object.assign(message, fields);
       const subs = chatSubscribers.get(message.channelId);
       if (subs) for (const peer of subs) send(peer, { type: "message-edited", message });
       res.json(message);
@@ -370,24 +346,18 @@ async function startServer(port = 3000) {
 
   const MAX_FILE_BYTES = 15 * 1024 * 1024; 
   
-  app.post(
-    "/api/channels/:channelId/media",
-    requireAuth,
-    express.raw({ type: () => true, limit: MAX_FILE_BYTES }),
-    async (req, res) => {
-      if (!channelIfMember(req.params.channelId, req.userId)) return res.status(403).json({ error: "Sem acesso." });
-      const contentType = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
-      const body = req.body;
-      if (!Buffer.isBuffer(body) || body.length === 0) return res.status(400).json({ error: "Arquivo vazio." });
-      if (body.length > MAX_FILE_BYTES) return res.status(413).json({ error: "Arquivo grande demais (limite: 15 MB)." });
-      
-      try {
-        const id = crypto.randomUUID();
-        await insertMedia({ id, ownerId: req.userId, channelId: req.params.channelId, contentType, size: body.length, dataB64: body.toString("base64") });
-        res.json({ mediaId: id, size: body.length });
-      } catch (err) { res.status(500).json({ error: "Erro ao salvar arquivo." }); }
-    }
-  );
+  app.post("/api/channels/:channelId/media", requireAuth, express.raw({ type: () => true, limit: MAX_FILE_BYTES }), async (req, res) => {
+    if (!channelIfMember(req.params.channelId, req.userId)) return res.status(403).json({ error: "Sem acesso." });
+    const contentType = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) return res.status(400).json({ error: "Arquivo vazio." });
+    if (body.length > MAX_FILE_BYTES) return res.status(413).json({ error: "Arquivo grande demais (limite: 15 MB)." });
+    try {
+      const id = crypto.randomUUID();
+      await insertMedia({ id, ownerId: req.userId, channelId: req.params.channelId, contentType, size: body.length, dataB64: body.toString("base64") });
+      res.json({ mediaId: id, size: body.length });
+    } catch (err) { res.status(500).json({ error: "Erro ao salvar arquivo." }); }
+  });
 
   function parseRange(header, size) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(header || "");
@@ -407,7 +377,6 @@ async function startServer(port = 3000) {
       const media = await getMediaData(req.params.mediaId);
       if (!media) return res.status(404).json({ error: "Arquivo não encontrado." });
       if (!media.channelIds.some((cid) => channelIfMember(cid, userId))) return res.status(403).json({ error: "Sem acesso." });
-      
       const size = media.buffer.length;
       res.setHeader("Content-Type", media.contentType);
       res.setHeader("Accept-Ranges", "bytes");
@@ -425,10 +394,7 @@ async function startServer(port = 3000) {
     } catch (err) { res.status(500).json({ error: "Erro." }); }
   });
 
-  app.use((err, req, res, next) => {
-    console.error("Erro não tratado:", err);
-    res.status(err.status || 500).json({ error: "Algo deu errado no servidor." });
-  });
+  app.use((err, req, res, next) => { console.error("Erro não tratado:", err); res.status(err.status || 500).json({ error: "Algo deu errado no servidor." }); });
 
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
@@ -485,7 +451,7 @@ async function startServer(port = 3000) {
       if (cleanFileId) await addMediaChannel(cleanFileId, channelId);
       await insertMessage(message);
 
-      // === NOVO: Para de digitar quando a mensagem é enviada ===
+      // Limpa o "digitando" quando a mensagem é enviada
       const channelTyping = typingState.get(channelId);
       if (channelTyping && channelTyping.has(userId)) {
         clearTimeout(channelTyping.get(userId));
@@ -533,28 +499,22 @@ async function startServer(port = 3000) {
         return;
       }
 
-      // === NOVO: Avisa que está digitando ===
       if (msg.type === "typing-start") {
         if (!channelIfMember(msg.channelId, ws.userId)) return;
         if (!typingState.has(msg.channelId)) typingState.set(msg.channelId, new Map());
         const channelTyping = typingState.get(msg.channelId);
-        
         if (channelTyping.has(ws.userId)) clearTimeout(channelTyping.get(ws.userId));
-        
         const timeout = setTimeout(() => {
           channelTyping.delete(ws.userId);
           const subs = chatSubscribers.get(msg.channelId);
           if (subs) for (const peer of subs) send(peer, { type: "typing-stop", channelId: msg.channelId, userId: ws.userId });
-        }, 3000); // some depois de 3 segundos sem digitar
-        
+        }, 3000);
         channelTyping.set(ws.userId, timeout);
-        
         const subs = chatSubscribers.get(msg.channelId);
         if (subs) for (const peer of subs) { if (peer !== ws) send(peer, { type: "typing-start", channelId: msg.channelId, userId: ws.userId, username: ws.username }); }
         return;
       }
 
-      // === NOVO: Avisa que parou de digitar ===
       if (msg.type === "typing-stop") {
         if (!channelIfMember(msg.channelId, ws.userId)) return;
         const channelTyping = typingState.get(msg.channelId);
@@ -586,16 +546,12 @@ async function startServer(port = 3000) {
 
     ws.on("close", () => {
       allConnectedClients.delete(ws);
-      
-      // Limpa o digitando se desconectar
       const channelTyping = typingState.get(ws.channelId);
       if (channelTyping && channelTyping.has(ws.userId)) {
-        clearTimeout(channelTyping.get(ws.userId));
-        channelTyping.delete(ws.userId);
+        clearTimeout(channelTyping.get(ws.userId)); channelTyping.delete(ws.userId);
         const subs = chatSubscribers.get(ws.channelId);
         if (subs) for (const peer of subs) send(peer, { type: "typing-stop", channelId: ws.channelId, userId: ws.userId });
       }
-      
       const room = callRooms.get(ws.channelId);
       if (room) { room.delete(ws.peerId); for (const peer of room.values()) send(peer, { type: "peer-left", id: ws.peerId }); if (room.size === 0) callRooms.delete(ws.channelId); }
       const subs = chatSubscribers.get(ws.channelId);
@@ -606,8 +562,7 @@ async function startServer(port = 3000) {
   const interval = setInterval(() => {
     wss.clients.forEach((ws) => {
       if (ws.isAlive === false) return ws.terminate();
-      ws.isAlive = false;
-      ws.ping();
+      ws.isAlive = false; ws.ping();
     });
   }, 30000);
 
