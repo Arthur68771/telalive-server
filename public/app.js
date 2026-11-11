@@ -17,7 +17,6 @@ let localScreenStream = null;
 let localMicStream = null;
 let micMuted = false;
 
-// NOVO: rtcConfig dinâmico (com TURN) e estado do digitando
 let rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 const typingUsers = new Map();
 let typingTimeout = null;
@@ -196,7 +195,6 @@ const userCardPronouns = document.getElementById("user-card-pronouns");
 const userCardBio = document.getElementById("user-card-bio");
 const userCardClose = document.getElementById("user-card-close");
 
-// NOVO: Barra lateral redimensionável
 const channelPanel = document.querySelector(".channel-panel");
 const resizeHandle = document.getElementById("resize-handle");
 const savedWidth = localStorage.getItem("telalive-sidebar-width");
@@ -508,11 +506,9 @@ async function loadMessageHistory(channelId) {
 }
 
 function shouldHighlightMessage(msg) {
-  if (!currentUser || msg.userId === currentUser.id) return false;
-  const rawText = (msg.text || "").toLowerCase();
-  if (rawText.includes("@everyone")) return true;
-  const myUsername = (currentUser.username || "").toLowerCase();
-  if (myUsername && rawText.includes(`@${myUsername}`)) return true;
+  if (!currentUser) return false;
+  if (msg.mentions && msg.mentions.includes("everyone")) return true;
+  if (msg.mentions && msg.mentions.includes(currentUser.id)) return true;
   if (msg.replyTo && msg.replyTo.username === currentUser.username) return true;
   return false;
 }
@@ -532,13 +528,14 @@ function appendChatMessage(msg) {
   let formattedText = "";
   if (msg.text) {
     let html = escapeHtml(msg.text);
+    html = html.replace(/@everyone/gi, '<span class="chat-mention">@everyone</span>');
     if (cachedFriendsForMention) {
       cachedFriendsForMention.forEach(f => {
         const safeName = f.username.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        html = html.replace(new RegExp(`@${safeName}`, 'gi'), `<span class="chat-mention">@${f.username}</span>`);
+        const regex = new RegExp(`@${safeName}\\b`, 'gi');
+        html = html.replace(regex, `<span class="chat-mention">@${f.username}</span>`);
       });
     }
-    html = html.replace(/@everyone/gi, '<span class="chat-mention">@everyone</span>');
     formattedText = html;
   }
 
@@ -593,15 +590,6 @@ function appendChatMessage(msg) {
   chatMessagesEl.appendChild(el);
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 }
-
-const lightbox = document.getElementById("lightbox");
-const lightboxImg = document.getElementById("lightbox-img");
-const lightboxClose = document.getElementById("lightbox-close");
-function openLightbox(src) { lightboxImg.src = src; lightbox.classList.remove("hidden"); }
-function closeLightbox() { lightbox.classList.add("hidden"); lightboxImg.removeAttribute("src"); }
-lightbox.addEventListener("click", (e) => { if (e.target !== lightboxImg) closeLightbox(); });
-lightboxClose.addEventListener("click", closeLightbox);
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !lightbox.classList.contains("hidden")) closeLightbox(); });
 // ---------- Enviar arquivo no chat ----------
 const MAX_CHAT_FILE_BYTES = 15 * 1024 * 1024;
 const chatVideoPreview = document.getElementById("chat-video-preview");
@@ -656,11 +644,60 @@ async function uploadChatFile(file, channelId) {
   return data.mediaId;
 }
 
+// ---------- DIGITANDO ----------
+function updateTypingIndicator() {
+  const el = document.getElementById("typing-indicator");
+  if (!el) return;
+  if (typingUsers.size === 0) {
+    el.classList.add("hidden");
+    el.innerHTML = "";
+    return;
+  }
+  el.classList.remove("hidden");
+  const names = Array.from(typingUsers.values());
+  let text = "";
+  if (names.length === 1) text = `${names[0]} está digitando`;
+  else if (names.length === 2) text = `${names[0]} e ${names[1]} estão digitando`;
+  else text = `${names.length} pessoas estão digitando`;
+  el.innerHTML = `<span>${escapeHtml(text)}</span><span class="dots"><span></span><span></span><span></span></span>`;
+}
+
+chatInput.addEventListener("input", () => {
+  const text = chatInput.value.trim();
+  if (!ws || ws.readyState !== WebSocket.OPEN || !activeChannelId) return;
+  
+  if (text.length > 0) {
+    if (!isTyping) {
+      isTyping = true;
+      ws.send(JSON.stringify({ type: "typing-start", channelId: activeChannelId }));
+    }
+    if (typingTimeout) clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => {
+      isTyping = false;
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "typing-stop", channelId: activeChannelId }));
+    }, 2000);
+  } else {
+    if (isTyping) {
+      isTyping = false;
+      if (typingTimeout) clearTimeout(typingTimeout);
+      ws.send(JSON.stringify({ type: "typing-stop", channelId: activeChannelId }));
+    }
+  }
+});
+
 async function sendChatMessage() {
   const text = chatInput.value.trim();
   const channelId = activeChannelId;
   const hasMedia = pendingChatImageDataUrl || pendingChatAudioDataUrl || pendingChatFile;
   if ((!text && !hasMedia) || !ws || ws.readyState !== WebSocket.OPEN || !channelId || sendingChatMessage) return;
+
+  const mentions = [];
+  if (text.includes("@everyone")) mentions.push("everyone");
+  if (cachedFriendsForMention) {
+    cachedFriendsForMention.forEach(f => {
+      if (text.includes(`@${f.username}`)) mentions.push(f.id);
+    });
+  }
 
   let mediaId;
   let isVideo = false;
@@ -699,6 +736,7 @@ async function sendChatMessage() {
     fileId: !isVideo ? mediaId : undefined,
     fileName: !isVideo ? fileName : undefined,
     replyToId: replyingToMessage?.id || undefined,
+    mentions: mentions,
   }));
 
   chatInput.value = "";
@@ -714,46 +752,6 @@ async function sendChatMessage() {
 chatSendBtn.addEventListener("click", sendChatMessage);
 chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && mentionDropdown.classList.contains("hidden")) sendChatMessage();
-});
-
-// ---------- Digitando ----------
-function updateTypingIndicator() {
-  const el = document.getElementById("typing-indicator");
-  if (!el) return;
-  if (typingUsers.size === 0) {
-    el.classList.add("hidden");
-    el.innerHTML = "";
-    return;
-  }
-  el.classList.remove("hidden");
-  const names = Array.from(typingUsers.values());
-  let text = "";
-  if (names.length === 1) text = `${names[0]} está digitando`;
-  else if (names.length === 2) text = `${names[0]} e ${names[1]} estão digitando`;
-  else text = `${names.length} pessoas estão digitando`;
-  el.innerHTML = `<span>${escapeHtml(text)}</span><span class="dots"><span></span><span></span><span></span></span>`;
-}
-
-chatInput.addEventListener("input", () => {
-  const text = chatInput.value.trim();
-  if (!ws || ws.readyState !== WebSocket.OPEN || !activeChannelId) return;
-  if (text.length > 0) {
-    if (!isTyping) {
-      isTyping = true;
-      ws.send(JSON.stringify({ type: "typing-start", channelId: activeChannelId }));
-    }
-    if (typingTimeout) clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => {
-      isTyping = false;
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "typing-stop", channelId: activeChannelId }));
-    }, 2000);
-  } else {
-    if (isTyping) {
-      isTyping = false;
-      if (typingTimeout) clearTimeout(typingTimeout);
-      ws.send(JSON.stringify({ type: "typing-stop", channelId: activeChannelId }));
-    }
-  }
 });
 
 async function setPendingChatImage(file) {
@@ -821,14 +819,18 @@ chatInput.addEventListener("paste", (e) => {
   }
 });
 
-// ---------- Menções ----------
+// ---------- MARCACOES ----------
 async function getMentionOptions(query) {
   if (!cachedFriendsForMention) {
     try { const data = await api("/api/friends"); cachedFriendsForMention = data.friends; } catch { cachedFriendsForMention = []; }
   }
   const options = [{ everyone: true, label: "everyone" }, ...cachedFriendsForMention.map((f) => ({ user: f }))];
-  const q = (query || "").toLowerCase();
-  return options.filter((o) => o.everyone ? "everyone".includes(q) : (o.user.username || "").toLowerCase().includes(q));
+  const q = (query || "").toLowerCase().trim();
+  if (q === "") return options;
+  return options.filter((o) => {
+    if (o.everyone) return "everyone".includes(q);
+    return (o.user.username || "").toLowerCase().includes(q);
+  });
 }
 
 function getMentionQuery() {
@@ -865,6 +867,8 @@ function applyMention(opt) {
   chatInput.value = newBefore + textAfter;
   mentionDropdown.classList.add("hidden");
   chatInput.focus();
+  const newCursorPos = newBefore.length;
+  chatInput.setSelectionRange(newCursorPos, newCursorPos);
 }
 
 chatInput.addEventListener("input", updateMentionDropdown);
