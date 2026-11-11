@@ -13,21 +13,14 @@ const {
 
 const GOOGLE_CLIENT_ID = "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
-
 const HF_TOKEN = process.env.HF_TOKEN || "";
 
 async function startServer(port = 3000) {
   const db = await loadDB();
-  db.users = db.users || [];
-  db.servers = db.servers || [];
-  db.channels = db.channels || [];
-  db.friendRequests = db.friendRequests || [];
-  db.categories = db.categories || [];
-  db.dmChannels = db.dmChannels || [];
+  db.users = db.users || []; db.servers = db.servers || []; db.channels = db.channels || [];
+  db.friendRequests = db.friendRequests || []; db.categories = db.categories || []; db.dmChannels = db.dmChannels || [];
 
-  function persist() {
-    saveDB(db).catch((err) => console.error("Erro ao salvar no banco:", err.message));
-  }
+  function persist() { saveDB(db).catch((err) => console.error("Erro ao salvar:", err.message)); }
 
   const sessions = new Map();
   const app = express();
@@ -36,20 +29,14 @@ async function startServer(port = 3000) {
 
   function requireAuth(req, res, next) {
     const header = req.headers.authorization || "";
-    const token = header.replace("Bearer ", "");
-    const userId = sessions.get(token);
+    const userId = sessions.get(header.replace("Bearer ", ""));
     if (!userId) return res.status(401).json({ error: "Não autenticado." });
     req.userId = userId;
     next();
   }
 
   function publicUser(user) {
-    return {
-      id: user.id, username: user.username,
-      avatarDataUrl: user.avatarDataUrl || user.googlePicture || null,
-      bannerDataUrl: user.bannerDataUrl || null,
-      bio: user.bio || "", pronouns: user.pronouns || "",
-    };
+    return { id: user.id, username: user.username, avatarDataUrl: user.avatarDataUrl || user.googlePicture || null, bannerDataUrl: user.bannerDataUrl || null, bio: user.bio || "", pronouns: user.pronouns || "" };
   }
 
   function uniqueUsernameFrom(base) {
@@ -68,10 +55,8 @@ async function startServer(port = 3000) {
     if (!password || password.length < 4) return res.status(400).json({ error: "Senha precisa ter pelo menos 4 caracteres." });
     const clean = username.trim();
     if (db.users.some((u) => u.username.toLowerCase() === clean.toLowerCase())) return res.status(400).json({ error: "Esse nome já existe." });
-    
     const user = { id: crypto.randomUUID(), username: clean, passwordHash: await bcrypt.hash(password, 10) };
-    db.users.push(user);
-    persist();
+    db.users.push(user); persist();
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, user.id);
     res.json({ token, user: publicUser(user) });
@@ -96,12 +81,10 @@ async function startServer(port = 3000) {
       const ticket = await googleClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
       payload = ticket.getPayload();
     } catch { return res.status(401).json({ error: "Erro ao verificar conta do Google." }); }
-    
     let user = db.users.find((u) => u.googleId === payload.sub);
     if (!user) {
       user = { id: crypto.randomUUID(), username: uniqueUsernameFrom(payload.name || payload.email.split("@")[0]), googleId: payload.sub, googlePicture: payload.picture || null, passwordHash: null };
-      db.users.push(user);
-      persist();
+      db.users.push(user); persist();
     }
     const token = crypto.randomBytes(24).toString("hex");
     sessions.set(token, user.id);
@@ -117,7 +100,6 @@ async function startServer(port = 3000) {
     const user = db.users.find((u) => u.id === req.userId);
     const { avatarDataUrl, username, bannerDataUrl, bio, pronouns } = req.body || {};
     let changed = false;
-
     if (typeof username === "string" && username.trim() !== user.username) {
       const clean = username.trim();
       if (clean.length < 3) return res.status(400).json({ error: "Nome precisa ter pelo menos 3 letras." });
@@ -128,7 +110,6 @@ async function startServer(port = 3000) {
     if (typeof bannerDataUrl === "string" && bannerDataUrl.startsWith("data:image/")) { user.bannerDataUrl = bannerDataUrl; changed = true; }
     if (typeof bio === "string") { user.bio = bio.trim().slice(0, 190); changed = true; }
     if (typeof pronouns === "string") { user.pronouns = pronouns.trim().slice(0, 40); changed = true; }
-
     if (changed) {
       persist();
       const userData = publicUser(user);
@@ -146,8 +127,7 @@ async function startServer(port = 3000) {
         body: JSON.stringify({ ttl: 86400 })
       });
       const data = await response.json();
-      if (data.iceServers) res.json({ iceServers: data.iceServers });
-      else res.json({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      res.json({ iceServers: data.iceServers || [{ urls: "stun:stun.l.google.com:19302" }] });
     } catch (err) { res.json({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); }
   });
 
@@ -168,8 +148,7 @@ async function startServer(port = 3000) {
     const { name } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: "Dê um nome ao servidor." });
     const server = { id: crypto.randomUUID(), name: name.trim(), ownerId: req.userId, inviteCode: crypto.randomBytes(4).toString("hex"), members: [req.userId] };
-    db.servers.push(server);
-    db.channels.push({ id: crypto.randomUUID(), serverId: server.id, name: "geral", categoryId: null });
+    db.servers.push(server); db.channels.push({ id: crypto.randomUUID(), serverId: server.id, name: "geral", categoryId: null });
     persist(); res.json(serverWithChannels(server, req.userId));
   });
 
@@ -220,8 +199,7 @@ async function startServer(port = 3000) {
     const user = db.users.find((u) => u.id === req.userId);
     if (!user.mutedChannelIds) user.mutedChannelIds = [];
     const idx = user.mutedChannelIds.indexOf(req.params.channelId);
-    if (idx === -1) user.mutedChannelIds.push(req.params.channelId);
-    else user.mutedChannelIds.splice(idx, 1);
+    if (idx === -1) user.mutedChannelIds.push(req.params.channelId); else user.mutedChannelIds.splice(idx, 1);
     persist(); res.json({ muted: idx === -1 });
   });
 
