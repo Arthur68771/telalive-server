@@ -17,16 +17,11 @@ let localScreenStream = null;
 let localMicStream = null;
 let micMuted = false;
 
-// NOVO: Servidores STUN/TURN adicionais pra tentar furar NAT restritivo
-const rtcConfig = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-    { urls: "stun:stun2.l.google.com:19302" },
-    { urls: "stun:global.stun.twilio.com:3478" },
-  ],
-  iceCandidatePoolSize: 10
-};
+// NOVO: rtcConfig dinâmico (com TURN) e estado do digitando
+let rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+const typingUsers = new Map();
+let typingTimeout = null;
+let isTyping = false;
 
 // ---------- Elementos ----------
 const authScreen = document.getElementById("auth-screen");
@@ -92,6 +87,8 @@ const chatAudioPreviewRemove = document.getElementById("chat-audio-preview-remov
 let pendingChatAudioDataUrl = null;
 let audioRecorder = null;
 let audioRecorderChunks = [];
+
+const typingIndicator = document.getElementById("typing-indicator");
 
 let replyingToMessage = null;
 const replyBanner = document.getElementById("reply-banner");
@@ -199,7 +196,34 @@ const userCardPronouns = document.getElementById("user-card-pronouns");
 const userCardBio = document.getElementById("user-card-bio");
 const userCardClose = document.getElementById("user-card-close");
 
-// ---------- Redimensionar imagem (Permite GIF e mantém animação) ----------
+// NOVO: Barra lateral redimensionável
+const channelPanel = document.querySelector(".channel-panel");
+const resizeHandle = document.getElementById("resize-handle");
+const savedWidth = localStorage.getItem("telalive-sidebar-width");
+if (savedWidth) channelPanel.style.width = savedWidth + "px";
+let isResizing = false;
+resizeHandle.addEventListener("mousedown", (e) => { e.preventDefault(); isResizing = true; document.body.style.cursor = "ew-resize"; });
+document.addEventListener("mousemove", (e) => {
+  if (!isResizing) return;
+  const newWidth = Math.max(160, Math.min(450, e.clientX));
+  channelPanel.style.width = newWidth + "px";
+});
+document.addEventListener("mouseup", () => {
+  if (isResizing) {
+    isResizing = false;
+    document.body.style.cursor = "";
+    localStorage.setItem("telalive-sidebar-width", parseInt(channelPanel.style.width));
+  }
+});
+
+async function loadIceServers() {
+  try {
+    const res = await fetch("/api/turn-credentials");
+    const data = await res.json();
+    if (data.iceServers) rtcConfig = { iceServers: data.iceServers };
+  } catch (err) { console.warn("Falha ao carregar TURN."); }
+}
+
 function resizeImageFile(file, maxSize = 160) {
   return new Promise((resolve, reject) => {
     if (file.type === "image/gif") {
@@ -216,12 +240,10 @@ function resizeImageFile(file, maxSize = 160) {
       img.onerror = reject;
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        canvas.width = maxSize;
-        canvas.height = maxSize;
+        canvas.width = maxSize; canvas.height = maxSize;
         const ctx = canvas.getContext("2d");
         const side = Math.min(img.width, img.height);
-        const sx = (img.width - side) / 2;
-        const sy = (img.height - side) / 2;
+        const sx = (img.width - side) / 2; const sy = (img.height - side) / 2;
         ctx.drawImage(img, sx, sy, side, side, 0, 0, maxSize, maxSize);
         resolve(canvas.toDataURL("image/webp", 0.85));
       };
@@ -247,16 +269,10 @@ function resizeImageKeepAspect(file, maxDimension = 640) {
       img.onerror = reject;
       img.onload = () => {
         let { width, height } = img;
-        if (width > height && width > maxDimension) {
-          height = Math.round((height * maxDimension) / width);
-          width = maxDimension;
-        } else if (height > maxDimension) {
-          width = Math.round((width * maxDimension) / height);
-          height = maxDimension;
-        }
+        if (width > height && width > maxDimension) { height = Math.round((height * maxDimension) / width); width = maxDimension; } 
+        else if (height > maxDimension) { width = Math.round((width * maxDimension) / height); height = maxDimension; }
         const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = width; canvas.height = height;
         canvas.getContext("2d").drawImage(img, 0, 0, width, height);
         resolve(canvas.toDataURL("image/webp", 0.82));
       };
@@ -271,7 +287,6 @@ function avatarHtml(username, avatarDataUrl) {
   return escapeHtml((username || "?").slice(0, 2).toUpperCase());
 }
 
-// ---------- Card de perfil ----------
 async function openUserCard(user) {
   if (!user) return;
   if (user.id !== currentUser?.id) {
@@ -280,14 +295,13 @@ async function openUserCard(user) {
       const freshUser = friends.friends.find((f) => f.id === user.id);
       if (freshUser) user = freshUser;
     } catch (err) {}
-  } else {
-    user = currentUser;
-  }
+  } else user = currentUser;
+  
   userCardName.textContent = user.username || "?";
   userCardAvatar.innerHTML = avatarHtml(user.username, user.avatarDataUrl);
   if (user.bannerDataUrl) userCardBanner.style.backgroundImage = `url(${user.bannerDataUrl})`;
   else userCardBanner.style.backgroundImage = "";
-  if (user.pronouns) { userCardPronouns.textContent = user.pronouns; userCardPronouns.style.display = "block"; }
+  if (user.pronouns) { userCardPronouns.textContent = user.pronouns; userCardPronouns.style.display = "block"; } 
   else userCardPronouns.style.display = "none";
   userCardBio.textContent = user.bio || "Sem bio.";
   userCardModal.classList.remove("hidden");
@@ -297,7 +311,6 @@ userCardClose.addEventListener("click", closeUserCard);
 userCardModal.addEventListener("click", (e) => { if (e.target === userCardModal) closeUserCard(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !userCardModal.classList.contains("hidden")) closeUserCard(); });
 
-// ---------- Chamadas à API ----------
 async function api(path, options = {}) {
   const res = await fetch(path, {
     ...options,
@@ -308,7 +321,6 @@ async function api(path, options = {}) {
   return data;
 }
 
-// ---------- Autenticação ----------
 switchLink.addEventListener("click", () => {
   authMode = authMode === "login" ? "register" : "login";
   updateAuthUI();
@@ -361,7 +373,6 @@ async function tryResumeSession() {
   }
 }
 
-// ---------- App principal ----------
 async function enterApp() {
   authScreen.classList.add("hidden");
   appScreen.style.display = "flex";
@@ -469,7 +480,9 @@ function selectChannel(channelId, channelName) {
   waitingText.textContent = "Aguardando alguém entrar no canal...";
   videoGrid.innerHTML = "";
   shareBtn.classList.remove("hidden"); stopShareBtn.classList.add("hidden");
-  statusText.textContent = "Conectado ao canal";
+  
+  typingUsers.clear();
+  updateTypingIndicator();
 
   const server = myServers.find((s) => s.id === activeServerId);
   const channel = server?.channels.find((c) => c.id === channelId);
@@ -482,6 +495,7 @@ function selectChannel(channelId, channelName) {
   loadMessageHistory(channelId);
   connectToChannel(channelId);
   renderParticipantsBar();
+  renderTopbarParticipants();
 }
 
 async function loadMessageHistory(channelId) {
@@ -532,16 +546,7 @@ function appendChatMessage(msg) {
   if (msg.fileId) {
     const fileUrl = `/api/media/${encodeURIComponent(msg.fileId)}?token=${encodeURIComponent(token)}&download=1`;
     const fileName = escapeHtml(msg.fileName || "Arquivo");
-    fileHtml = `
-      <a href="${fileUrl}" target="_blank" class="chat-file-attachment" title="Baixar arquivo">
-        <div class="chat-file-icon">📄</div>
-        <div class="chat-file-info">
-          <span class="chat-file-name">${fileName}</span>
-          <span class="chat-file-size">Clique para baixar</span>
-        </div>
-        <div class="chat-file-download-icon">⬇️</div>
-      </a>
-    `;
+    fileHtml = `<a href="${fileUrl}" target="_blank" class="chat-file-attachment" title="Baixar arquivo"><div class="chat-file-icon">📄</div><div class="chat-file-info"><span class="chat-file-name">${fileName}</span><span class="chat-file-size">Clique para baixar</span></div><div class="chat-file-download-icon">⬇️</div></a>`;
   }
 
   el.innerHTML = `
@@ -559,9 +564,7 @@ function appendChatMessage(msg) {
         ${msg.editedAt ? '<span class="chat-msg-edited-tag">(editado)</span>' : ""}
       </div>
       ${msg.replyTo ? `<div class="chat-msg-reply-quote">↪ ${escapeHtml(msg.replyTo.username)}: ${escapeHtml(msg.replyTo.text)}</div>` : ""}
-      <div class="chat-msg-text-wrap">
-        ${msg.text ? `<div class="chat-msg-text">${formattedText}</div>` : ""}
-      </div>
+      <div class="chat-msg-text-wrap">${msg.text ? `<div class="chat-msg-text">${formattedText}</div>` : ""}</div>
       ${msg.imageDataUrl ? `<img class="chat-msg-image" src="${msg.imageDataUrl}" alt="imagem" />` : ""}
       ${msg.audioDataUrl ? `<audio class="chat-msg-audio" controls src="${msg.audioDataUrl}"></audio>` : ""}
       ${msg.videoId ? `<video class="chat-msg-video" controls preload="metadata" src="/api/media/${encodeURIComponent(msg.videoId)}?token=${encodeURIComponent(token)}"></video>` : ""}
@@ -591,17 +594,14 @@ function appendChatMessage(msg) {
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 }
 
-// ---------- Visualizador de foto ----------
 const lightbox = document.getElementById("lightbox");
 const lightboxImg = document.getElementById("lightbox-img");
 const lightboxClose = document.getElementById("lightbox-close");
-
 function openLightbox(src) { lightboxImg.src = src; lightbox.classList.remove("hidden"); }
 function closeLightbox() { lightbox.classList.add("hidden"); lightboxImg.removeAttribute("src"); }
 lightbox.addEventListener("click", (e) => { if (e.target !== lightboxImg) closeLightbox(); });
 lightboxClose.addEventListener("click", closeLightbox);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !lightbox.classList.contains("hidden")) closeLightbox(); });
-
 // ---------- Enviar arquivo no chat ----------
 const MAX_CHAT_FILE_BYTES = 15 * 1024 * 1024;
 const chatVideoPreview = document.getElementById("chat-video-preview");
@@ -622,32 +622,26 @@ function clearPendingChatFile() {
 
 async function setPendingChatFile(file) {
   if (!file) return;
-
   if (file.type.startsWith("image/")) {
     clearPendingChatFile();
     await setPendingChatImage(file);
     return;
   }
-
   if (file.size > MAX_CHAT_FILE_BYTES) {
     alert(`Esse arquivo tem ${(file.size / 1024 / 1024).toFixed(1)} MB. O limite é 15 MB.`);
     chatImageInput.value = "";
     return;
   }
-  
   clearPendingChatImage();
   if (pendingChatFileObjectUrl) URL.revokeObjectURL(pendingChatFileObjectUrl);
-  
   pendingChatFile = file;
   pendingChatFileObjectUrl = URL.createObjectURL(file);
-  
   if (file.type.startsWith("video/")) {
     chatVideoPreviewPlayer.src = pendingChatFileObjectUrl;
   } else {
     chatVideoPreviewPlayer.src = "";
     chatVideoPreviewPlayer.title = file.name;
   }
-  
   chatVideoPreview.classList.remove("hidden");
 }
 
@@ -697,19 +691,15 @@ async function sendChatMessage() {
     return;
   }
 
-  ws.send(
-    JSON.stringify({
-      type: "chat-message",
-      channelId,
-      text,
-      imageDataUrl: pendingChatImageDataUrl || undefined,
-      audioDataUrl: pendingChatAudioDataUrl || undefined,
-      videoId: isVideo ? mediaId : undefined,
-      fileId: !isVideo ? mediaId : undefined,
-      fileName: !isVideo ? fileName : undefined,
-      replyToId: replyingToMessage?.id || undefined,
-    })
-  );
+  ws.send(JSON.stringify({
+    type: "chat-message", channelId, text,
+    imageDataUrl: pendingChatImageDataUrl || undefined,
+    audioDataUrl: pendingChatAudioDataUrl || undefined,
+    videoId: isVideo ? mediaId : undefined,
+    fileId: !isVideo ? mediaId : undefined,
+    fileName: !isVideo ? fileName : undefined,
+    replyToId: replyingToMessage?.id || undefined,
+  }));
 
   chatInput.value = "";
   clearPendingChatImage();
@@ -724,6 +714,46 @@ async function sendChatMessage() {
 chatSendBtn.addEventListener("click", sendChatMessage);
 chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && mentionDropdown.classList.contains("hidden")) sendChatMessage();
+});
+
+// ---------- Digitando ----------
+function updateTypingIndicator() {
+  const el = document.getElementById("typing-indicator");
+  if (!el) return;
+  if (typingUsers.size === 0) {
+    el.classList.add("hidden");
+    el.innerHTML = "";
+    return;
+  }
+  el.classList.remove("hidden");
+  const names = Array.from(typingUsers.values());
+  let text = "";
+  if (names.length === 1) text = `${names[0]} está digitando`;
+  else if (names.length === 2) text = `${names[0]} e ${names[1]} estão digitando`;
+  else text = `${names.length} pessoas estão digitando`;
+  el.innerHTML = `<span>${escapeHtml(text)}</span><span class="dots"><span></span><span></span><span></span></span>`;
+}
+
+chatInput.addEventListener("input", () => {
+  const text = chatInput.value.trim();
+  if (!ws || ws.readyState !== WebSocket.OPEN || !activeChannelId) return;
+  if (text.length > 0) {
+    if (!isTyping) {
+      isTyping = true;
+      ws.send(JSON.stringify({ type: "typing-start", channelId: activeChannelId }));
+    }
+    if (typingTimeout) clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => {
+      isTyping = false;
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "typing-stop", channelId: activeChannelId }));
+    }, 2000);
+  } else {
+    if (isTyping) {
+      isTyping = false;
+      if (typingTimeout) clearTimeout(typingTimeout);
+      ws.send(JSON.stringify({ type: "typing-stop", channelId: activeChannelId }));
+    }
+  }
 });
 
 async function setPendingChatImage(file) {
@@ -748,7 +778,6 @@ chatVideoPreviewRemove.addEventListener("click", () => {
   chatImageInput.value = "";
 });
 
-// ---------- Gravar e enviar áudio ----------
 chatRecordBtn.addEventListener("click", async () => {
   if (audioRecorder && audioRecorder.state === "recording") { audioRecorder.stop(); return; }
   try {
@@ -792,7 +821,7 @@ chatInput.addEventListener("paste", (e) => {
   }
 });
 
-// ---------- Menções com @ ----------
+// ---------- Menções ----------
 async function getMentionOptions(query) {
   if (!cachedFriendsForMention) {
     try { const data = await api("/api/friends"); cachedFriendsForMention = data.friends; } catch { cachedFriendsForMention = []; }
@@ -839,7 +868,6 @@ function applyMention(opt) {
 }
 
 chatInput.addEventListener("input", updateMentionDropdown);
-
 chatInput.addEventListener("keydown", (e) => {
   if (mentionDropdown.classList.contains("hidden")) return;
   const items = [...mentionDropdown.children];
@@ -851,7 +879,8 @@ chatInput.addEventListener("keydown", (e) => {
 });
 
 // ---------- WebSocket + WebRTC ----------
-function connectToChannel(channelId) {
+async function connectToChannel(channelId) {
+  await loadIceServers();
   const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${wsProtocol}://${location.host}?token=${encodeURIComponent(token)}`);
 
@@ -863,14 +892,14 @@ function connectToChannel(channelId) {
       case "entered": {
         selfPeerId = msg.selfId;
         knownPeers = new Map(msg.peers.map((p) => [p.id, { username: p.username, avatarDataUrl: p.avatarDataUrl }]));
-        updateWaitingText(); renderParticipantsBar();
+        updateWaitingText(); renderParticipantsBar(); renderTopbarParticipants();
         for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
         if (activeChannelType === "voice") await ensureMicJoined();
         break;
       }
       case "peer-joined": {
         knownPeers.set(msg.id, { username: msg.username, avatarDataUrl: msg.avatarDataUrl });
-        playJoinSound(); updateWaitingText(); renderParticipantsBar();
+        playJoinSound(); updateWaitingText(); renderParticipantsBar(); renderTopbarParticipants();
         await syncOutgoingTracksToPeer(msg.id);
         break;
       }
@@ -899,9 +928,13 @@ function connectToChannel(channelId) {
         break;
       }
       case "peer-left": {
-        knownPeers.delete(msg.id); closePeerConnections(msg.id); removeVideoTile(msg.id); cleanupPeerAudio(msg.id); playLeaveSound(); updateWaitingText(); renderParticipantsBar();
+        const leftPeer = knownPeers.get(msg.id);
+        knownPeers.delete(msg.id); closePeerConnections(msg.id); removeVideoTile(msg.id); cleanupPeerAudio(msg.id); playLeaveSound(); updateWaitingText(); renderParticipantsBar(); renderTopbarParticipants();
+        if (leftPeer && !userCardModal.classList.contains("hidden") && userCardName.textContent === leftPeer.username) closeUserCard();
         break;
       }
+      case "typing-start": { typingUsers.set(msg.userId, msg.username); updateTypingIndicator(); break; }
+      case "typing-stop": { typingUsers.delete(msg.userId); updateTypingIndicator(); break; }
       case "screen-share-ended": { removeVideoTile(msg.from); break; }
       case "chat-message": {
         if (msg.message.userId !== currentUser?.id) playMessageSound();
@@ -933,17 +966,14 @@ function connectToChannel(channelId) {
         break;
       }
       case "user-updated": {
-        if (msg.user.id === currentUser.id) {
-          currentUser = msg.user;
-          updateProfileBtn();
-        }
+        if (msg.user.id === currentUser.id) { currentUser = msg.user; updateProfileBtn(); }
         if (cachedFriendsForMention) {
           const friendIdx = cachedFriendsForMention.findIndex((f) => f.id === msg.user.id);
           if (friendIdx !== -1) cachedFriendsForMention[friendIdx] = msg.user;
         }
         document.querySelectorAll(`.chat-msg .avatar[data-user-id="${msg.user.id}"]`).forEach((el) => { el.innerHTML = avatarHtml(msg.user.username, msg.user.avatarDataUrl); });
         document.querySelectorAll(`.chat-msg .chat-msg-author[data-user-id="${msg.user.id}"]`).forEach((el) => { el.textContent = msg.user.username; });
-        renderParticipantsBar();
+        renderParticipantsBar(); renderTopbarParticipants();
         if (!userCardModal.classList.contains("hidden") && userCardName.textContent === msg.user.username) openUserCard(msg.user);
         break;
       }
@@ -984,6 +1014,40 @@ function renderParticipantsBar() {
   updateChannelSidebarPresence();
 }
 
+function renderTopbarParticipants() {
+  const container = document.getElementById("topbar-participants");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const meAvatar = document.createElement("div");
+  meAvatar.className = "avatar"; meAvatar.style.cursor = "pointer"; meAvatar.title = "Você";
+  meAvatar.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
+  meAvatar.addEventListener("click", () => openUserCard(currentUser));
+  container.appendChild(meAvatar);
+
+  let count = 1;
+  for (const [peerId, peer] of knownPeers) {
+    const avatar = document.createElement("div");
+    avatar.className = "avatar"; avatar.style.cursor = "pointer"; avatar.title = peer.username;
+    avatar.innerHTML = avatarHtml(peer.username, peer.avatarDataUrl);
+    avatar.addEventListener("click", async () => {
+      try {
+        const friends = await api("/api/friends");
+        const friend = friends.friends.find((f) => f.username === peer.username);
+        if (friend) openUserCard(friend);
+        else openUserCard({ username: peer.username, avatarDataUrl: peer.avatarDataUrl });
+      } catch { openUserCard({ username: peer.username, avatarDataUrl: peer.avatarDataUrl }); }
+    });
+    container.appendChild(avatar);
+    count++;
+  }
+
+  const countText = document.createElement("span");
+  countText.className = "participant-count";
+  countText.textContent = `${count} online`;
+  container.appendChild(countText);
+}
+
 function updateChannelSidebarPresence() {
   if (!activeChannelId) return;
   const holder = document.getElementById(`presence-${activeChannelId}`);
@@ -992,7 +1056,6 @@ function updateChannelSidebarPresence() {
   const meMini = document.createElement("div");
   meMini.className = "mini-avatar"; meMini.title = "Você"; meMini.innerHTML = avatarHtml(currentUser?.username, currentUser?.avatarDataUrl);
   holder.appendChild(meMini);
-
   for (const peer of knownPeers.values()) {
     const mini = document.createElement("div");
     mini.className = "mini-avatar"; mini.title = peer.username; mini.innerHTML = avatarHtml(peer.username, peer.avatarDataUrl);
@@ -1010,21 +1073,6 @@ async function flushPendingIceCandidates(peerId, pc) {
 function createPeerConnection(peerId, direction) {
   const conn = new RTCPeerConnection(rtcConfig);
   conn.onicecandidate = (event) => { if (event.candidate) ws.send(JSON.stringify({ type: "ice-candidate", target: peerId, candidate: event.candidate })); };
-  
-  // NOVO: Se a conexão cair, tenta reconectar (iceRestart)
-  conn.oniceconnectionstatechange = () => {
-    if (conn.iceConnectionState === "failed" || conn.iceConnectionState === "disconnected") {
-      console.log("Conexão caiu com", peerId, "- tentando reiniciar...");
-      if (direction === "out") {
-        conn.restartIce();
-        conn.createOffer({ iceRestart: true }).then((offer) => {
-          conn.setLocalDescription(offer);
-          ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
-        }).catch(console.error);
-      }
-    }
-  };
-
   if (direction === "in") {
     conn.ontrack = (event) => {
       const stream = event.streams[0];
@@ -1039,8 +1087,7 @@ function createPeerConnection(peerId, direction) {
 function playRemoteAudio(peerId, stream) {
   let audioEl = document.getElementById(`audio-${peerId}`);
   if (!audioEl) { audioEl = document.createElement("audio"); audioEl.id = `audio-${peerId}`; audioEl.autoplay = true; audioEl.style.display = "none"; document.body.appendChild(audioEl); }
-  audioEl.srcObject = stream;
-  audioEl.muted = deafened;
+  audioEl.srcObject = stream; audioEl.muted = deafened;
 }
 
 deafenBtn.addEventListener("click", () => {
@@ -1131,7 +1178,7 @@ async function ensureMicJoined() {
         const rawTrack = rawStream.getAudioTracks()[0];
         const processedTrack = await noiseSuppressionProcessor.startProcessing(rawTrack);
         localMicStream = new MediaStream([processedTrack]);
-      } catch (err) { console.error("Redução de ruído por IA indisponível, usando áudio normal:", err); localMicStream = rawStream; }
+      } catch (err) { console.error("Redução de ruído indisponível:", err); localMicStream = rawStream; }
     } else localMicStream = rawStream;
     setupSpeakingDetector(localMicStream, "me");
     for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
@@ -1146,48 +1193,26 @@ micBtn.addEventListener("click", async () => {
 
 shareBtn.addEventListener("click", async () => {
   try {
-    // Otimização: Pede a tela em 720p, que é mais leve e evita travamento
-    localScreenStream = await navigator.mediaDevices.getDisplayMedia({ 
-      video: { 
-        frameRate: { ideal: 30, max: 60 }, // Tenta 30fps, se der vai até 60
-        width: { max: 1280 },             // Força resolução máxima de 720p
-        height: { max: 720 },
-        cursor: "always",
-        displaySurface: "monitor"
-      }, 
-      audio: true 
-    });
-
-    // Avisa o WebRTC pra priorizar o movimento (evita que o vídeo fique borrado)
+    localScreenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 60 }, width: { max: 1280 }, height: { max: 720 }, cursor: "always", displaySurface: "monitor" }, audio: true });
     const videoTrack = localScreenStream.getVideoTracks()[0];
-    if (videoTrack && 'contentHint' in videoTrack) {
-      videoTrack.contentHint = 'motion';
-    }
-
-    // Sincroniza a tela com todos os amigos no canal
+    if (videoTrack && 'contentHint' in videoTrack) videoTrack.contentHint = 'motion';
     for (const peerId of knownPeers.keys()) {
       await syncOutgoingTracksToPeer(peerId);
-      
-      // Otimização: Ajusta o Bitrate da conexão pra 2.5Mbps (bom pra 720p)
       const pc = pcsOut.get(peerId);
       if (pc) {
         const sender = pc.getSenders().find(s => s.track === videoTrack);
         if (sender) {
           const params = sender.getParameters();
           if (!params.encodings) params.encodings = [{}];
-          params.encodings[0].maxBitrate = 2500000; // 2.5 Mbps
+          params.encodings[0].maxBitrate = 2500000;
           await sender.setParameters(params);
         }
       }
     }
-
-    shareBtn.classList.add("hidden"); 
-    stopShareBtn.classList.remove("hidden");
+    shareBtn.classList.add("hidden"); stopShareBtn.classList.remove("hidden");
     statusText.textContent = "Transmitindo sua tela";
     videoTrack.onended = () => stopSharing();
-  } catch (err) { 
-    console.error("Erro ao compartilhar tela:", err); 
-  }
+  } catch (err) { console.error("Erro ao compartilhar tela:", err); }
 });
 
 stopShareBtn.addEventListener("click", stopSharing);
@@ -1234,7 +1259,7 @@ async function openDirectMessage(friendUser) {
     statusText.textContent = "Conectado";
     const callColumn = document.querySelector(".call-column"); const chatColumn = document.querySelector(".chat-column");
     callColumn.style.display = "flex"; chatColumn.style.display = "flex"; chatColumn.style.width = "";
-    loadMessageHistory(activeChannelId); connectToChannel(activeChannelId); renderParticipantsBar();
+    loadMessageHistory(activeChannelId); connectToChannel(activeChannelId); renderParticipantsBar(); renderTopbarParticipants();
   } catch (err) { alert(err.message); }
 }
 
