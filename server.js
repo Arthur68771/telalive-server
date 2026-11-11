@@ -170,8 +170,7 @@ async function startServer(port = 3000) {
     const server = { id: crypto.randomUUID(), name: name.trim(), ownerId: req.userId, inviteCode: crypto.randomBytes(4).toString("hex"), members: [req.userId] };
     db.servers.push(server);
     db.channels.push({ id: crypto.randomUUID(), serverId: server.id, name: "geral", categoryId: null });
-    persist();
-    res.json(serverWithChannels(server, req.userId));
+    persist(); res.json(serverWithChannels(server, req.userId));
   });
 
   app.post("/api/servers/join", requireAuth, (req, res) => {
@@ -401,8 +400,6 @@ async function startServer(port = 3000) {
   const callRooms = new Map();
   const chatSubscribers = new Map();
   const allConnectedClients = new Set();
-
-  // === NOVO: Controle do "digitando" ===
   const typingState = new Map(); // channelId -> Map<userId, timeout>
 
   function send(ws, msg) { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg)); }
@@ -451,7 +448,6 @@ async function startServer(port = 3000) {
       if (cleanFileId) await addMediaChannel(cleanFileId, channelId);
       await insertMessage(message);
 
-      // Limpa o "digitando" quando a mensagem é enviada
       const channelTyping = typingState.get(channelId);
       if (channelTyping && channelTyping.has(userId)) {
         clearTimeout(channelTyping.get(userId));
