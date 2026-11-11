@@ -337,8 +337,8 @@ async function startServer(port = 3000) {
 
   app.post("/api/channels/:channelId/forward", requireAuth, async (req, res) => {
     if (!channelIfMember(req.params.channelId, req.userId)) return res.status(403).json({ error: "Sem acesso." });
-    const { text, imageDataUrl, audioDataUrl, videoId, fileId, fileName } = req.body || {};
-    const message = await createChatMessage(req.params.channelId, req.userId, { text, imageDataUrl, audioDataUrl, videoId, fileId, fileName });
+    const { text, imageDataUrl, audioDataUrl, videoId, fileId, fileName, mentions } = req.body || {};
+    const message = await createChatMessage(req.params.channelId, req.userId, { text, imageDataUrl, audioDataUrl, videoId, fileId, fileName, mentions });
     if (!message) return res.status(400).json({ error: "Nada para encaminhar." });
     res.json(message);
   });
@@ -400,13 +400,13 @@ async function startServer(port = 3000) {
   const callRooms = new Map();
   const chatSubscribers = new Map();
   const allConnectedClients = new Set();
-  const typingState = new Map(); // channelId -> Map<userId, timeout>
+  const typingState = new Map();
 
   function send(ws, msg) { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg)); }
   let lastMessageTime = 0;
   function nextMessageTime() { lastMessageTime = Math.max(Date.now(), lastMessageTime + 1); return lastMessageTime; }
 
-  async function createChatMessage(channelId, userId, { text, imageDataUrl, audioDataUrl, videoId, fileId, fileName, replyToId }) {
+  async function createChatMessage(channelId, userId, { text, imageDataUrl, audioDataUrl, videoId, fileId, fileName, replyToId, mentions }) {
     try {
       const cleanText = (text || "").trim().slice(0, 2000);
       let cleanImage = null;
@@ -434,6 +434,8 @@ async function startServer(port = 3000) {
         if (original) replyTo = { id: original.id, username: original.username, text: (original.text || "").slice(0, 120) };
       }
 
+      const cleanMentions = Array.isArray(mentions) ? mentions : [];
+
       const author = db.users.find((u) => u.id === userId);
       const message = {
         id: crypto.randomUUID(), channelId, userId,
@@ -441,7 +443,8 @@ async function startServer(port = 3000) {
         avatarDataUrl: author ? author.avatarDataUrl || author.googlePicture || null : null,
         text: cleanText, imageDataUrl: cleanImage, audioDataUrl: cleanAudio,
         videoId: cleanVideoId, fileId: cleanFileId, fileName: fileName || null,
-        replyTo, createdAt: nextMessageTime(),
+        replyTo, mentions: cleanMentions,
+        createdAt: nextMessageTime(),
       };
 
       if (cleanVideoId) await addMediaChannel(cleanVideoId, channelId);
