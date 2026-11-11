@@ -14,6 +14,11 @@ const {
 const GOOGLE_CLIENT_ID = "174563350206-669sgb3rc9fmombqjeearvf8rao54n8u.apps.googleusercontent.com";
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
+// =========================================================================
+// COLOQUE SEU TOKEN DO HUGGING FACE AQUI
+// =========================================================================
+const HF_TOKEN = "hf_COLE_SEU_TOKEN_AQUI";
+
 async function startServer(port = 3000) {
   const db = await loadDB();
   db.users = db.users || [];
@@ -131,12 +136,30 @@ async function startServer(port = 3000) {
     if (changed) {
       persist();
       const userData = publicUser(user);
-      // Avisa TODOS os clientes conectados no WebSocket
       for (const client of allConnectedClients) {
         send(client, { type: "user-updated", user: userData });
       }
     }
     res.json(publicUser(user));
+  });
+
+  // === NOVA ROTA: Gera credenciais TURN via Hugging Face ===
+  app.get("/api/turn-credentials", async (req, res) => {
+    if (!HF_TOKEN || HF_TOKEN === "hf_COLE_SEU_TOKEN_AQUI") {
+      return res.json({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    }
+    try {
+      const response = await fetch("https://huggingface.co/api/cloudflare/turn-credentials", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${HF_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ttl: 86400 })
+      });
+      const data = await response.json();
+      if (data.iceServers) res.json({ iceServers: data.iceServers });
+      else res.json({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    } catch (err) {
+      res.json({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    }
   });
 
   function serverWithChannels(server, userId) {
@@ -411,7 +434,10 @@ async function startServer(port = 3000) {
   const wss = new WebSocketServer({ server });
   const callRooms = new Map();
   const chatSubscribers = new Map();
-  const allConnectedClients = new Set(); // ESSA LINHA É CRUCIAL PRO PERFIL
+  const allConnectedClients = new Set();
+
+  // === NOVO: Controle do "digitando" ===
+  const typingState = new Map(); // channelId -> Map<userId, timeout>
 
   function send(ws, msg) { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg)); }
   let lastMessageTime = 0;
@@ -459,6 +485,15 @@ async function startServer(port = 3000) {
       if (cleanFileId) await addMediaChannel(cleanFileId, channelId);
       await insertMessage(message);
 
+      // === NOVO: Para de digitar quando a mensagem é enviada ===
+      const channelTyping = typingState.get(channelId);
+      if (channelTyping && channelTyping.has(userId)) {
+        clearTimeout(channelTyping.get(userId));
+        channelTyping.delete(userId);
+        const subs = chatSubscribers.get(channelId);
+        if (subs) for (const peer of subs) send(peer, { type: "typing-stop", channelId, userId });
+      }
+
       const subs = chatSubscribers.get(channelId);
       if (subs) for (const peer of subs) send(peer, { type: "chat-message", message });
       return message;
@@ -471,7 +506,9 @@ async function startServer(port = 3000) {
     const userId = sessions.get(token);
     if (!userId) { ws.close(); return; }
     
-    allConnectedClients.add(ws); 
+    allConnectedClients.add(ws);
+    ws.isAlive = true;
+    ws.on("pong", () => { ws.isAlive = true; });
 
     const author = db.users.find((u) => u.id === userId);
     ws.userId = userId; ws.username = author ? author.username : "?";
@@ -496,6 +533,40 @@ async function startServer(port = 3000) {
         return;
       }
 
+      // === NOVO: Avisa que está digitando ===
+      if (msg.type === "typing-start") {
+        if (!channelIfMember(msg.channelId, ws.userId)) return;
+        if (!typingState.has(msg.channelId)) typingState.set(msg.channelId, new Map());
+        const channelTyping = typingState.get(msg.channelId);
+        
+        if (channelTyping.has(ws.userId)) clearTimeout(channelTyping.get(ws.userId));
+        
+        const timeout = setTimeout(() => {
+          channelTyping.delete(ws.userId);
+          const subs = chatSubscribers.get(msg.channelId);
+          if (subs) for (const peer of subs) send(peer, { type: "typing-stop", channelId: msg.channelId, userId: ws.userId });
+        }, 3000); // some depois de 3 segundos sem digitar
+        
+        channelTyping.set(ws.userId, timeout);
+        
+        const subs = chatSubscribers.get(msg.channelId);
+        if (subs) for (const peer of subs) { if (peer !== ws) send(peer, { type: "typing-start", channelId: msg.channelId, userId: ws.userId, username: ws.username }); }
+        return;
+      }
+
+      // === NOVO: Avisa que parou de digitar ===
+      if (msg.type === "typing-stop") {
+        if (!channelIfMember(msg.channelId, ws.userId)) return;
+        const channelTyping = typingState.get(msg.channelId);
+        if (channelTyping && channelTyping.has(ws.userId)) {
+          clearTimeout(channelTyping.get(ws.userId));
+          channelTyping.delete(ws.userId);
+          const subs = chatSubscribers.get(msg.channelId);
+          if (subs) for (const peer of subs) send(peer, { type: "typing-stop", channelId: msg.channelId, userId: ws.userId });
+        }
+        return;
+      }
+
       if (msg.type === "chat-message") {
         if (!channelIfMember(msg.channelId, ws.userId)) return;
         createChatMessage(msg.channelId, ws.userId, msg);
@@ -514,13 +585,33 @@ async function startServer(port = 3000) {
     });
 
     ws.on("close", () => {
-      allConnectedClients.delete(ws); 
+      allConnectedClients.delete(ws);
+      
+      // Limpa o digitando se desconectar
+      const channelTyping = typingState.get(ws.channelId);
+      if (channelTyping && channelTyping.has(ws.userId)) {
+        clearTimeout(channelTyping.get(ws.userId));
+        channelTyping.delete(ws.userId);
+        const subs = chatSubscribers.get(ws.channelId);
+        if (subs) for (const peer of subs) send(peer, { type: "typing-stop", channelId: ws.channelId, userId: ws.userId });
+      }
+      
       const room = callRooms.get(ws.channelId);
       if (room) { room.delete(ws.peerId); for (const peer of room.values()) send(peer, { type: "peer-left", id: ws.peerId }); if (room.size === 0) callRooms.delete(ws.channelId); }
       const subs = chatSubscribers.get(ws.channelId);
       if (subs) { subs.delete(ws); if (subs.size === 0) chatSubscribers.delete(ws.channelId); }
     });
   });
+
+  const interval = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      if (ws.isAlive === false) return ws.terminate();
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, 30000);
+
+  wss.on("close", () => clearInterval(interval));
 
   return new Promise((resolve) => { server.listen(port, () => resolve(server)); });
 }
