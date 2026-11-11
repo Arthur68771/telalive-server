@@ -17,7 +17,7 @@ const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 // =========================================================================
 // COLOQUE SEU TOKEN DO HUGGING FACE AQUI
 // =========================================================================
-const HF_TOKEN = "hf_COLE_SEU_TOKEN_AQUI";
+const HF_TOKEN = process.env.HF_TOKEN || "";
 
 async function startServer(port = 3000) {
   const db = await loadDB();
