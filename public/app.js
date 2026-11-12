@@ -22,6 +22,12 @@ const typingUsers = new Map();
 let typingTimeout = null;
 let isTyping = false;
 
+// Variáveis para o carregamento de histórico
+let isLoadingHistory = false;
+let hasMoreHistory = true;
+let oldestMessageTime = null;
+let lastMessageDate = null;
+
 // ---------- Elementos ----------
 const authScreen = document.getElementById("auth-screen");
 const appScreen = document.getElementById("app-screen");
@@ -497,12 +503,83 @@ function selectChannel(channelId, channelName) {
 }
 
 async function loadMessageHistory(channelId) {
-  chatMessagesEl.innerHTML = "";
+  chatMessagesEl.innerHTML = '<div class="load-more-trigger" id="load-more-trigger"></div><p class="chat-empty" id="chat-empty">Carregando...</p>';
+  isLoadingHistory = false;
+  hasMoreHistory = true;
+  oldestMessageTime = null;
+  lastMessageDate = null;
+  
+  chatMessagesEl.onscroll = async () => {
+    if (chatMessagesEl.scrollTop === 0 && hasMoreHistory && !isLoadingHistory) {
+      await loadOlderMessages(channelId);
+    }
+  };
+
   try {
-    const messages = await api(`/api/channels/${channelId}/messages`);
-    if (messages.length === 0) chatMessagesEl.innerHTML = '<p class="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>';
-    else for (const msg of messages) appendChatMessage(msg);
-  } catch (err) { console.error(err); }
+    const messages = await api(`/api/channels/${channelId}/messages?limit=50`);
+    
+    chatMessagesEl.innerHTML = '<div class="load-more-trigger" id="load-more-trigger"></div>';
+    
+    if (messages.length === 0) {
+      chatMessagesEl.innerHTML += '<p class="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>';
+      hasMoreHistory = false;
+      return;
+    }
+
+    if (messages.length < 50) hasMoreHistory = false;
+    oldestMessageTime = messages[0].createdAt;
+
+    for (const msg of messages) {
+      appendChatMessage(msg, false);
+    }
+    
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  } catch (err) {
+    console.error(err);
+    chatMessagesEl.innerHTML = '<p class="chat-empty">Erro ao carregar mensagens.</p>';
+  }
+}
+
+async function loadOlderMessages(channelId) {
+  if (isLoadingHistory || !hasMoreHistory || !oldestMessageTime) return;
+  isLoadingHistory = true;
+  
+  const trigger = document.getElementById("load-more-trigger");
+  if (trigger) trigger.classList.add("loading");
+
+  try {
+    const messages = await api(`/api/channels/${channelId}/messages?limit=50&before=${oldestMessageTime}`);
+    
+    if (messages.length === 0) {
+      hasMoreHistory = false;
+      if (trigger) trigger.classList.remove("loading");
+      isLoadingHistory = false;
+      return;
+    }
+
+    if (messages.length < 50) hasMoreHistory = false;
+    oldestMessageTime = messages[0].createdAt;
+
+    // Para manter a ordem e os separadores corretos, recarregamos o histórico
+    // do zero até o momento com um limite maior. Isso evita bugs de inserção no DOM.
+    const allMessages = await api(`/api/channels/${channelId}/messages?limit=${(chatMessagesEl.querySelectorAll(".chat-msg").length || 50) + 50}`);
+    
+    chatMessagesEl.innerHTML = '<div class="load-more-trigger" id="load-more-trigger"></div>';
+    lastMessageDate = null;
+    
+    for (const msg of allMessages) {
+      appendChatMessage(msg, false);
+    }
+    
+    if (allMessages.length < 50) hasMoreHistory = false;
+    else oldestMessageTime = allMessages[0].createdAt;
+
+  } catch (err) {
+    console.error(err);
+  } finally {
+    isLoadingHistory = false;
+    if (trigger) trigger.classList.remove("loading");
+  }
 }
 
 function shouldHighlightMessage(msg) {
@@ -513,12 +590,33 @@ function shouldHighlightMessage(msg) {
   return false;
 }
 
-function appendChatMessage(msg) {
+function appendChatMessage(msg, scrollToBottom = true) {
   const emptyMsg = chatMessagesEl.querySelector(".chat-empty");
   if (emptyMsg) emptyMsg.remove();
 
   const isMe = currentUser && msg.userId === currentUser.id;
-  const time = new Date(msg.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const msgDate = new Date(msg.createdAt);
+  const time = msgDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  
+  // Separador de data
+  const dateKey = msgDate.toLocaleDateString("pt-BR");
+  if (dateKey !== lastMessageDate) {
+    lastMessageDate = dateKey;
+    
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+    
+    let dateText = msgDate.toLocaleDateString("pt-BR", { day: "numeric", month: "long", year: "numeric" });
+    if (dateKey === today.toLocaleDateString("pt-BR")) dateText = "Hoje";
+    else if (dateKey === yesterday.toLocaleDateString("pt-BR")) dateText = "Ontem";
+
+    const sep = document.createElement("div");
+    sep.className = "chat-date-separator";
+    sep.innerHTML = `<span>${dateText}</span>`;
+    chatMessagesEl.appendChild(sep);
+  }
+
   const highlighted = shouldHighlightMessage(msg);
 
   const el = document.createElement("div");
@@ -588,9 +686,11 @@ function appendChatMessage(msg) {
   if (deleteBtn) deleteBtn.addEventListener("click", () => deleteMessage(msg.id));
 
   chatMessagesEl.appendChild(el);
-  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  
+  if (scrollToBottom) {
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  }
 }
-// ---------- Enviar arquivo no chat ----------
 const MAX_CHAT_FILE_BYTES = 15 * 1024 * 1024;
 const chatVideoPreview = document.getElementById("chat-video-preview");
 const chatVideoPreviewPlayer = document.getElementById("chat-video-preview-player");
@@ -943,6 +1043,7 @@ async function connectToChannel(channelId) {
       case "chat-message": {
         if (msg.message.userId !== currentUser?.id) playMessageSound();
         appendChatMessage(msg.message);
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
         break;
       }
       case "message-edited": {
