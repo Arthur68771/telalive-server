@@ -22,7 +22,6 @@ const typingUsers = new Map();
 let typingTimeout = null;
 let isTyping = false;
 
-// Variáveis para o carregamento de histórico
 let isLoadingHistory = false;
 let hasMoreHistory = true;
 let oldestMessageTime = null;
@@ -560,8 +559,6 @@ async function loadOlderMessages(channelId) {
     if (messages.length < 50) hasMoreHistory = false;
     oldestMessageTime = messages[0].createdAt;
 
-    // Para manter a ordem e os separadores corretos, recarregamos o histórico
-    // do zero até o momento com um limite maior. Isso evita bugs de inserção no DOM.
     const allMessages = await api(`/api/channels/${channelId}/messages?limit=${(chatMessagesEl.querySelectorAll(".chat-msg").length || 50) + 50}`);
     
     chatMessagesEl.innerHTML = '<div class="load-more-trigger" id="load-more-trigger"></div>';
@@ -598,7 +595,6 @@ function appendChatMessage(msg, scrollToBottom = true) {
   const msgDate = new Date(msg.createdAt);
   const time = msgDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   
-  // Separador de data
   const dateKey = msgDate.toLocaleDateString("pt-BR");
   if (dateKey !== lastMessageDate) {
     lastMessageDate = dateKey;
@@ -691,6 +687,7 @@ function appendChatMessage(msg, scrollToBottom = true) {
     chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
   }
 }
+// ---------- Enviar arquivo no chat ----------
 const MAX_CHAT_FILE_BYTES = 15 * 1024 * 1024;
 const chatVideoPreview = document.getElementById("chat-video-preview");
 const chatVideoPreviewPlayer = document.getElementById("chat-video-preview-player");
@@ -982,7 +979,11 @@ chatInput.addEventListener("keydown", (e) => {
   else if (e.key === "Escape") { mentionDropdown.classList.add("hidden"); }
 });
 
-// ---------- WebSocket + WebRTC ----------
+// ---------- WebSocket + WebRTC (Perfect Negotiation) ----------
+let makingOffer = false;
+let ignoreOffer = false;
+let isSettingRemoteAnswerPending = false;
+
 async function connectToChannel(channelId) {
   await loadIceServers();
   const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
@@ -997,43 +998,76 @@ async function connectToChannel(channelId) {
         selfPeerId = msg.selfId;
         knownPeers = new Map(msg.peers.map((p) => [p.id, { username: p.username, avatarDataUrl: p.avatarDataUrl }]));
         updateWaitingText(); renderParticipantsBar(); renderTopbarParticipants();
-        for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
+        for (const peerId of knownPeers.keys()) await ensureConnection(peerId, "out");
         if (activeChannelType === "voice") await ensureMicJoined();
         break;
       }
       case "peer-joined": {
         knownPeers.set(msg.id, { username: msg.username, avatarDataUrl: msg.avatarDataUrl });
         playJoinSound(); updateWaitingText(); renderParticipantsBar(); renderTopbarParticipants();
-        await syncOutgoingTracksToPeer(msg.id);
+        await ensureConnection(msg.id, "out");
         break;
       }
       case "offer": {
         let pcIn = pcsIn.get(msg.from);
-        if (!pcIn) { pcIn = createPeerConnection(msg.from, "in"); pcsIn.set(msg.from, pcIn); }
-        await pcIn.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-        await flushPendingIceCandidates(msg.from, pcIn);
-        const answer = await pcIn.createAnswer();
-        await pcIn.setLocalDescription(answer);
-        ws.send(JSON.stringify({ type: "answer", target: msg.from, sdp: answer }));
+        if (!pcIn) {
+          pcIn = createPeerConnection(msg.from, "in");
+          pcsIn.set(msg.from, pcIn);
+        }
+        try {
+          await pcIn.setRemoteDescription(msg.sdp);
+          if (pcIn.pendingIceCandidates) {
+            for (const c of pcIn.pendingIceCandidates) { try { await pcIn.addIceCandidate(c); } catch (e) {} }
+            pcIn.pendingIceCandidates = [];
+          }
+          await flushPendingIceCandidates(msg.from, pcIn);
+          const answer = await pcIn.createAnswer();
+          await pcIn.setLocalDescription(answer);
+          ws.send(JSON.stringify({ type: "answer", target: msg.from, sdp: answer }));
+        } catch (err) {
+          console.error("Erro ao processar offer:", err);
+        }
         break;
       }
       case "answer": {
         const pcOut = pcsOut.get(msg.from);
-        if (pcOut) { await pcOut.setRemoteDescription(new RTCSessionDescription(msg.sdp)); await flushPendingIceCandidates(msg.from, pcOut); }
+        if (pcOut) {
+          try {
+            await pcOut.setRemoteDescription(msg.sdp);
+            if (pcOut.pendingIceCandidates) {
+              for (const c of pcOut.pendingIceCandidates) { try { await pcOut.addIceCandidate(c); } catch (e) {} }
+              pcOut.pendingIceCandidates = [];
+            }
+            await flushPendingIceCandidates(msg.from, pcOut);
+          } catch (err) {
+            console.error("Erro ao processar answer:", err);
+          }
+        }
         break;
       }
       case "ice-candidate": {
         if (!msg.candidate) break;
         const pc = pcsOut.get(msg.from) || pcsIn.get(msg.from);
         if (pc) {
-          if (pc.remoteDescription) { try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch (err) { console.error(err); } } 
-          else { if (!pendingIceCandidates.has(msg.from)) pendingIceCandidates.set(msg.from, []); pendingIceCandidates.get(msg.from).push(msg.candidate); }
+          if (pc.remoteDescription) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch (err) {}
+          } else {
+            if (!pc.pendingIceCandidates) pc.pendingIceCandidates = [];
+            pc.pendingIceCandidates.push(new RTCIceCandidate(msg.candidate));
+          }
         }
         break;
       }
       case "peer-left": {
         const leftPeer = knownPeers.get(msg.id);
-        knownPeers.delete(msg.id); closePeerConnections(msg.id); removeVideoTile(msg.id); cleanupPeerAudio(msg.id); playLeaveSound(); updateWaitingText(); renderParticipantsBar(); renderTopbarParticipants();
+        knownPeers.delete(msg.id); 
+        closePeerConnections(msg.id); 
+        removeVideoTile(msg.id); 
+        cleanupPeerAudio(msg.id); 
+        playLeaveSound(); 
+        updateWaitingText(); 
+        renderParticipantsBar(); 
+        renderTopbarParticipants();
         if (leftPeer && !userCardModal.classList.contains("hidden") && userCardName.textContent === leftPeer.username) closeUserCard();
         break;
       }
@@ -1084,6 +1118,61 @@ async function connectToChannel(channelId) {
       }
     }
   };
+}
+
+async function ensureConnection(peerId, direction) {
+  let pc = direction === "out" ? pcsOut.get(peerId) : pcsIn.get(peerId);
+  if (!pc) {
+    pc = createPeerConnection(peerId, direction);
+    if (direction === "out") pcsOut.set(peerId, pc);
+    else pcsIn.set(peerId, pc);
+  }
+  if (direction === "out" && localMicStream) {
+    const existingTrackIds = new Set(pc.getSenders().map((s) => s.track?.id).filter(Boolean));
+    let addedAny = false;
+    for (const track of localMicStream.getTracks()) {
+      if (!existingTrackIds.has(track.id)) { pc.addTrack(track, localMicStream); addedAny = true; }
+    }
+    if (localScreenStream) {
+      for (const track of localScreenStream.getTracks()) {
+        if (!existingTrackIds.has(track.id)) { pc.addTrack(track, localScreenStream); addedAny = true; }
+      }
+    }
+    if (addedAny) {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer }));
+    }
+  }
+  return pc;
+}
+
+function createPeerConnection(peerId, direction) {
+  const conn = new RTCPeerConnection(rtcConfig);
+  conn.onicecandidate = (event) => { if (event.candidate && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ice-candidate", target: peerId, candidate: event.candidate })); };
+  
+  conn.onconnectionstatechange = () => {
+    if (conn.connectionState === "connected") {
+      statusText.textContent = "Transmitindo ao vivo";
+    } else if (conn.connectionState === "failed" || conn.connectionState === "disconnected") {
+      console.warn(`Conexão com ${peerId} falhou. Tentando reconectar...`);
+      statusText.textContent = "Reconectando...";
+      setTimeout(async () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          const room = { type: "ice-restart", target: peerId };
+        }
+      }, 2000);
+    }
+  };
+
+  if (direction === "in") {
+    conn.ontrack = (event) => {
+      const stream = event.streams[0];
+      if (event.track.kind === "video") showVideoTile(peerId, knownPeers.get(peerId)?.username || "Alguém", stream);
+      else if (event.track.kind === "audio") { playRemoteAudio(peerId, stream); setupSpeakingDetector(stream, peerId); }
+    };
+  }
+  return conn;
 }
 
 function updateWaitingText() {
@@ -1169,24 +1258,10 @@ function updateChannelSidebarPresence() {
 }
 
 async function flushPendingIceCandidates(peerId, pc) {
-  const queued = pendingIceCandidates.get(peerId);
+  const queued = pc.pendingIceCandidates;
   if (!queued) return;
-  pendingIceCandidates.delete(peerId);
-  for (const candidate of queued) { try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (err) { console.error(err); } }
-}
-
-function createPeerConnection(peerId, direction) {
-  const conn = new RTCPeerConnection(rtcConfig);
-  conn.onicecandidate = (event) => { if (event.candidate) ws.send(JSON.stringify({ type: "ice-candidate", target: peerId, candidate: event.candidate })); };
-  if (direction === "in") {
-    conn.ontrack = (event) => {
-      const stream = event.streams[0];
-      if (event.track.kind === "video") showVideoTile(peerId, knownPeers.get(peerId)?.username || "Alguém", stream);
-      else if (event.track.kind === "audio" && stream.getVideoTracks().length === 0) { playRemoteAudio(peerId, stream); setupSpeakingDetector(stream, peerId); }
-    };
-  }
-  conn.onconnectionstatechange = () => { if (conn.connectionState === "connected") statusText.textContent = "Transmitindo ao vivo"; };
-  return conn;
+  pc.pendingIceCandidates = [];
+  for (const candidate of queued) { try { await pc.addIceCandidate(candidate); } catch (err) { console.error(err); } }
 }
 
 function playRemoteAudio(peerId, stream) {
@@ -1234,16 +1309,6 @@ function closePeerConnections(peerId) {
   const pIn = pcsIn.get(peerId); if (pIn) { pIn.close(); pcsIn.delete(peerId); }
 }
 
-async function syncOutgoingTracksToPeer(peerId) {
-  let pc = pcsOut.get(peerId);
-  if (!pc) { pc = createPeerConnection(peerId, "out"); pcsOut.set(peerId, pc); }
-  const existingTrackIds = new Set(pc.getSenders().map((s) => s.track?.id).filter(Boolean));
-  let addedAny = false;
-  if (localMicStream) { for (const track of localMicStream.getTracks()) { if (!existingTrackIds.has(track.id)) { pc.addTrack(track, localMicStream); addedAny = true; } } }
-  if (localScreenStream) { for (const track of localScreenStream.getTracks()) { if (!existingTrackIds.has(track.id)) { pc.addTrack(track, localScreenStream); addedAny = true; } } }
-  if (addedAny) { const offer = await pc.createOffer(); await pc.setLocalDescription(offer); ws.send(JSON.stringify({ type: "offer", target: peerId, sdp: offer })); }
-}
-
 function setupSpeakingDetector(stream, key) {
   if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
   try {
@@ -1286,7 +1351,7 @@ async function ensureMicJoined() {
       } catch (err) { console.error("Redução de ruído indisponível:", err); localMicStream = rawStream; }
     } else localMicStream = rawStream;
     setupSpeakingDetector(localMicStream, "me");
-    for (const peerId of knownPeers.keys()) await syncOutgoingTracksToPeer(peerId);
+    for (const peerId of knownPeers.keys()) await ensureConnection(peerId, "out");
   } catch (err) { console.error("Não foi possível acessar o microfone:", err); }
 }
 
@@ -1302,7 +1367,7 @@ shareBtn.addEventListener("click", async () => {
     const videoTrack = localScreenStream.getVideoTracks()[0];
     if (videoTrack && 'contentHint' in videoTrack) videoTrack.contentHint = 'motion';
     for (const peerId of knownPeers.keys()) {
-      await syncOutgoingTracksToPeer(peerId);
+      await ensureConnection(peerId, "out");
       const pc = pcsOut.get(peerId);
       if (pc) {
         const sender = pc.getSenders().find(s => s.track === videoTrack);
