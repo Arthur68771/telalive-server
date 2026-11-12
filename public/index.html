@@ -177,6 +177,41 @@
     40% { transform: translateY(-4px); opacity: 1; }
   }
 
+  /* NOVO: Separador de data */
+  .chat-date-separator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 10px 0;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .chat-date-separator::before,
+  .chat-date-separator::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+    margin: 0 10px;
+  }
+
+  /* NOVO: Botão de carregar mais (invisível, só pra scroll) */
+  .load-more-trigger {
+    height: 20px;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .load-more-trigger.loading::after {
+    content: "Carregando...";
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10; }
   .modal { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; width: 100%; max-width: 340px; }
   .modal h3 { margin: 0 0 14px; font-size: 1.05rem; }
@@ -348,6 +383,7 @@
         </div>
         <div class="chat-column">
           <div class="chat-messages" id="chat-messages">
+            <div class="load-more-trigger" id="load-more-trigger"></div>
             <p class="chat-empty" id="chat-empty">Nenhuma mensagem ainda. Diga oi!</p>
           </div>
           
