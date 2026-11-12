@@ -6,7 +6,7 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const { OAuth2Client } = require("google-auth-library");
 const {
-  loadDB, saveDB, insertMessage, getMessage, getChannelMessages,
+  loadDB, saveDB, insertMessage, getMessage, getChannelMessages, getChannelMessagesPaginated,
   updateMessage, deleteMessageById, deleteChannelMessages, insertMedia,
   getMediaMeta, getMediaData, addMediaChannel, deleteMediaIfUnused,
 } = require("./db");
@@ -280,22 +280,16 @@ async function startServer(port = 3000) {
     res.json({ channelId: dm.id, friend: publicUser(db.users.find((u) => u.id === friendId)) });
   });
 
-    app.get("/api/channels/:channelId/messages", requireAuth, async (req, res) => {
+  app.get("/api/channels/:channelId/messages", requireAuth, async (req, res) => {
     if (!channelIfMember(req.params.channelId, req.userId)) return res.status(403).json({ error: "Sem acesso." });
     try {
-      const limit = parseInt(req.query.limit) || 50; // Carrega 50 por padrão
-      const before = req.query.before ? parseInt(req.query.before) : null; // Cursor pra mensagens antigas
-      
+      const limit = parseInt(req.query.limit) || 50;
+      const before = req.query.before ? parseInt(req.query.before) : null;
       let query = { channelId: req.params.channelId };
       if (before) query.createdAt = { $lt: before };
-      
       const msgs = await getChannelMessagesPaginated(query, limit);
       res.json(msgs);
     } catch (err) { res.status(500).json({ error: "Erro ao carregar mensagens." }); }
-  });, requireAuth, async (req, res) => {
-    if (!channelIfMember(req.params.channelId, req.userId)) return res.status(403).json({ error: "Sem acesso." });
-    try { const msgs = await getChannelMessages(req.params.channelId, 100); res.json(msgs); }
-    catch (err) { res.status(500).json({ error: "Erro ao carregar mensagens." }); }
   });
 
   app.patch("/api/messages/:messageId", requireAuth, async (req, res) => {
