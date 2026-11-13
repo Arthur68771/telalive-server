@@ -673,7 +673,7 @@ function appendChatMessage(msg, scrollToBottom = true) {
     } catch { openUserCard({ id: msg.userId, username: msg.username, avatarDataUrl: msg.avatarDataUrl }); }
   });
 
-  if (msg.imageDataUrl) el.querySelector(".chat-msg-image").addEventListener("click", () => openLightbox(msg.imageDataUrl));
+  if (msg.imageDataUrl) el.querySelector(".chat-msg-image").addEventListener("click", () => openImage(msg));
   el.querySelector('[data-action="reply"]').addEventListener("click", () => setReplyState(msg));
   el.querySelector('[data-action="forward"]').addEventListener("click", () => openForwardModal(msg));
   const editBtn = el.querySelector('[data-action="edit"]');
@@ -1265,9 +1265,27 @@ async function flushPendingIceCandidates(peerId, pc) {
 }
 
 function playRemoteAudio(peerId, stream) {
-  let audioEl = document.getElementById(`audio-${peerId}`);
-  if (!audioEl) { audioEl = document.createElement("audio"); audioEl.id = `audio-${peerId}`; audioEl.autoplay = true; audioEl.style.display = "none"; document.body.appendChild(audioEl); }
-  audioEl.srcObject = stream; audioEl.muted = deafened;
+  const audioId = `audio-${peerId}`;
+  let audioEl = document.getElementById(audioId);
+  
+  if (!audioEl) {
+    audioEl = document.createElement("audio");
+    audioEl.id = audioId;
+    audioEl.autoplay = true;
+    audioEl.style.display = "none";
+    document.body.appendChild(audioEl);
+  }
+  
+  if (audioEl.srcObject !== stream) {
+    audioEl.srcObject = stream;
+  }
+  
+  audioEl.muted = deafened;
+  
+  audioEl.play().catch((err) => {
+    console.warn("Autoplay de áudio bloqueado:", err);
+    document.addEventListener("click", () => audioEl.play().catch(() => {}), { once: true });
+  });
 }
 
 deafenBtn.addEventListener("click", () => {
@@ -1701,6 +1719,78 @@ async function forwardMessageTo(target) {
 }
 forwardModalCancel.addEventListener("click", () => forwardModal.classList.add("hidden"));
 
+// === VISUALIZADOR DE IMAGEM ESTILO DISCORD ===
+const imageViewer = document.getElementById("image-viewer");
+const imageViewerImg = document.getElementById("image-viewer-img");
+const imageViewerInfo = document.getElementById("image-viewer-info");
+let currentImageZoom = 1;
+let currentImagePos = { x: 0, y: 0 };
+let isDraggingImage = false;
+let dragStart = { x: 0, y: 0 };
+let currentImageMsg = null;
+
+function openImage(msg) {
+  currentImageMsg = msg;
+  currentImageZoom = 1;
+  currentImagePos = { x: 0, y: 0 };
+  imageViewerImg.style.transform = `scale(1) translate(0px, 0px)`;
+  imageViewerImg.src = msg.imageDataUrl;
+  
+  imageViewerInfo.innerHTML = `
+    <div class="avatar">${avatarHtml(msg.username, msg.avatarDataUrl)}</div>
+    <span>${escapeHtml(msg.username)}</span>
+  `;
+  
+  imageViewer.classList.add("open");
+}
+
+function closeImage() {
+  imageViewer.classList.remove("open");
+  imageViewerImg.removeAttribute("src");
+  currentImageMsg = null;
+}
+
+document.getElementById("img-close").addEventListener("click", closeImage);
+imageViewer.addEventListener("click", (e) => {
+  if (e.target === imageViewer || e.target.classList.contains("image-viewer-content")) closeImage();
+});
+
+document.getElementById("img-zoom-in").addEventListener("click", () => {
+  currentImageZoom = Math.min(currentImageZoom + 0.2, 3);
+  imageViewerImg.style.transform = `scale(${currentImageZoom}) translate(${currentImagePos.x}px, ${currentImagePos.y}px)`;
+});
+document.getElementById("img-zoom-out").addEventListener("click", () => {
+  currentImageZoom = Math.max(currentImageZoom - 0.2, 0.5);
+  imageViewerImg.style.transform = `scale(${currentImageZoom}) translate(${currentImagePos.x}px, ${currentImagePos.y}px)`;
+});
+
+document.getElementById("img-forward").addEventListener("click", () => {
+  if (currentImageMsg) openForwardModal(currentImageMsg);
+});
+
+imageViewerImg.addEventListener("mousedown", (e) => {
+  if (currentImageZoom <= 1) return;
+  isDraggingImage = true;
+  dragStart = { x: e.clientX - currentImagePos.x, y: e.clientY - currentImagePos.y };
+  imageViewerImg.style.cursor = "grabbing";
+});
+
+document.addEventListener("mousemove", (e) => {
+  if (!isDraggingImage) return;
+  currentImagePos = { x: e.clientX - dragStart.x, y: e.clientY - dragStart.y };
+  imageViewerImg.style.transform = `scale(${currentImageZoom}) translate(${currentImagePos.x}px, ${currentImagePos.y}px)`;
+});
+
+document.addEventListener("mouseup", () => {
+  isDraggingImage = false;
+  imageViewerImg.style.cursor = "grab";
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && imageViewer.classList.contains("open")) closeImage();
+});
+
+// Google Login
 updateAuthUI();
 tryResumeSession();
 
