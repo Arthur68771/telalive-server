@@ -177,7 +177,6 @@
     40% { transform: translateY(-4px); opacity: 1; }
   }
 
-  /* NOVO: Separador de data */
   .chat-date-separator {
     display: flex;
     align-items: center;
@@ -198,7 +197,6 @@
     margin: 0 10px;
   }
 
-  /* NOVO: Botão de carregar mais (invisível, só pra scroll) */
   .load-more-trigger {
     height: 20px;
     width: 100%;
@@ -212,6 +210,74 @@
     color: var(--muted);
   }
 
+  /* === NOVO: Visualizador de Imagem estilo Discord === */
+  #image-viewer {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0, 0, 0, 0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(5px);
+  }
+  #image-viewer.open { display: flex; }
+  
+  .image-viewer-content {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .image-viewer-controls {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+    z-index: 10;
+  }
+  .image-viewer-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text);
+    font-size: 0.9rem;
+  }
+  .image-viewer-info .avatar { width: 28px; height: 28px; }
+  .image-viewer-actions {
+    display: flex;
+    gap: 10px;
+  }
+  .image-viewer-btn {
+    background: rgba(255,255,255,0.1);
+    border: none;
+    color: white;
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 1.1rem;
+    transition: background 0.15s;
+  }
+  .image-viewer-btn:hover { background: rgba(255,255,255,0.2); }
+
+  .image-viewer-img {
+    max-width: 90vw;
+    max-height: 85vh;
+    object-fit: contain;
+    transition: transform 0.1s;
+    cursor: grab;
+  }
+  .image-viewer-img:active { cursor: grabbing; }
+
+  /* ... (Restante do CSS do modal, profile, etc. igual ao anterior) ... */
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10; }
   .modal { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; width: 100%; max-width: 340px; }
   .modal h3 { margin: 0 0 14px; font-size: 1.05rem; }
@@ -419,6 +485,26 @@
   </div>
 </div>
 
+<!-- Visualizador de imagem -->
+<div id="image-viewer">
+  <div class="image-viewer-controls">
+    <div class="image-viewer-info" id="image-viewer-info">
+      <!-- Avatar e nome serão inseridos via JS -->
+    </div>
+    <div class="image-viewer-actions">
+      <button class="image-viewer-btn" id="img-zoom-out" title="Diminuir zoom">➖</button>
+      <button class="image-viewer-btn" id="img-zoom-in" title="Aumentar zoom">➕</button>
+      <button class="image-viewer-btn" id="img-forward" title="Encaminhar">➡️</button>
+      <button class="image-viewer-btn" id="img-close" title="Fechar (ESC)">✕</button>
+    </div>
+  </div>
+  <div class="image-viewer-content">
+    <img class="image-viewer-img" id="image-viewer-img" draggable="false" />
+  </div>
+</div>
+
+<!-- ... (Restante dos modais: server, channel, category, profile, etc. - Iguais ao anterior) ... -->
+
 <div class="modal-backdrop hidden" id="server-modal">
   <div class="modal">
     <div class="tab-row">
@@ -573,11 +659,6 @@
       <button class="primary-btn" id="server-icon-modal-confirm">Salvar</button>
     </div>
   </div>
-</div>
-
-<div class="lightbox hidden" id="lightbox">
-  <button class="lightbox-close" id="lightbox-close" title="Fechar (Esc)">✕</button>
-  <img id="lightbox-img" alt="" />
 </div>
 
 <div class="modal-backdrop hidden" id="forward-modal">
