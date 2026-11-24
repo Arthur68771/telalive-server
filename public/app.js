@@ -2618,3 +2618,34 @@ function initGoogleButton() {
   google.accounts.id.renderButton(document.getElementById("google-signin-btn"), { theme: "filled_black", size: "large", shape: "pill", text: "continue_with" });
 }
 initGoogleButton();
+// === CONTROLE DO PAINEL DE CONEXÃO PERSISTENTE ===
+const connectionPanel = document.getElementById("connection-panel");
+const connectionChannelName = document.getElementById("connection-channel-name");
+const connectionShareBtn = document.getElementById("connection-share-btn");
+const connectionDisconnectBtn = document.getElementById("connection-disconnect-btn");
+
+function updateConnectionPanel() {
+  if (isInCall && currentVoiceChannelId) {
+    connectionPanel.classList.add("visible");
+    // Encontra o nome do canal de voz atual
+    const server = myServers.find(s => s.channels.some(c => c.id === currentVoiceChannelId));
+    const channel = server?.channels.find(c => c.id === currentVoiceChannelId);
+    connectionChannelName.textContent = channel ? channel.name : "Canal de voz";
+  } else {
+    connectionPanel.classList.remove("visible");
+  }
+}
+
+// Botão de compartilhar tela no painel flutuante
+connectionShareBtn.addEventListener("click", () => {
+  if (shareBtn.classList.contains("hidden")) {
+    stopSharing(); // Se já está compartilhando, para
+  } else {
+    shareBtn.click(); // Se não, inicia
+  }
+});
+
+// Botão de desconectar no painel flutuante
+connectionDisconnectBtn.addEventListener("click", () => {
+  leaveChannelBtn.click(); // Aciona a mesma função de sair do canal
+});
