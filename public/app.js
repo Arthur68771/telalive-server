@@ -520,14 +520,24 @@ function selectChannel(channelId, channelName) {
   const callColumn = document.querySelector(".call-column");
   const chatColumn = document.querySelector(".chat-column");
   
-  if (isInCall || activeChannelType === "voice") { 
+  // A LÓGICA CORRETA:
+  if (activeChannelType === "voice") {
+    // Se clicou em um canal de VOZ: esconde o chat e mostra a tela de call
     callColumn.style.display = "flex"; 
     chatColumn.style.display = "none"; 
-  } 
-  else { 
-    callColumn.style.display = "none"; 
-    chatColumn.style.display = "flex"; 
-    chatColumn.style.width = "100%"; 
+  } else {
+    // Se clicou em um canal de TEXTO: mostra o chat!
+    if (isInCall) {
+      // Se já estiver em call, mostra os dois lado a lado (call na esquerda, chat na direita)
+      callColumn.style.display = "flex";
+      chatColumn.style.display = "flex";
+      chatColumn.style.width = "320px";
+    } else {
+      // Se não estiver em call, mostra só o chat ocupando tudo
+      callColumn.style.display = "none";
+      chatColumn.style.display = "flex";
+      chatColumn.style.width = "100%";
+    }
   }
 
   loadMessageHistory(channelId);
@@ -1047,13 +1057,6 @@ async function connectToChannel(channelId) {
         for (const peerId of knownPeers.keys()) await ensureConnection(peerId, "out");
         if (activeChannelType === "voice") await ensureMicJoined();
         updateConnectionPanel();
-        
-        // NOVO LAYOUT: Esconde o chat assim que entrar na call
-        const callColumn = document.querySelector(".call-column");
-        const chatColumn = document.querySelector(".chat-column");
-        callColumn.style.display = "flex";
-        chatColumn.style.display = "none";
-        
         break;
       }
       case "peer-joined": {
