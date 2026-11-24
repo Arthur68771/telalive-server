@@ -522,8 +522,7 @@ function selectChannel(channelId, channelName) {
   
   if (isInCall || activeChannelType === "voice") { 
     callColumn.style.display = "flex"; 
-    chatColumn.style.display = "flex"; 
-    chatColumn.style.width = "320px"; 
+    chatColumn.style.display = "none"; 
   } 
   else { 
     callColumn.style.display = "none"; 
@@ -1048,6 +1047,13 @@ async function connectToChannel(channelId) {
         for (const peerId of knownPeers.keys()) await ensureConnection(peerId, "out");
         if (activeChannelType === "voice") await ensureMicJoined();
         updateConnectionPanel();
+        
+        // NOVO LAYOUT: Esconde o chat assim que entrar na call
+        const callColumn = document.querySelector(".call-column");
+        const chatColumn = document.querySelector(".chat-column");
+        callColumn.style.display = "flex";
+        chatColumn.style.display = "none";
+        
         break;
       }
       case "peer-joined": {
